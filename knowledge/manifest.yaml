@@ -1,0 +1,37 @@
+version: "0.1.0"
+knowledge_pack: "dataanalyze-knowledge-pack"
+updated_at: "2026-04-23"
+embedding_model: "bge-m3"
+default_language: "zh-CN"
+description: "DataAnalyze 阶段三知识库骨架，面向表语义、字段语义、关系提示、指标定义和问法模式。"
+
+object_kinds:
+  - table_profile
+  - column_semantics
+  - relationship_hint
+  - metric_definition
+  - query_pattern
+  - glossary
+
+directories:
+  tables: "表级知识"
+  columns: "字段级语义知识"
+  relationships: "关系与 join 提示"
+  metrics: "指标定义"
+  patterns: "常见用户问法模式"
+  glossary: "业务术语与别名"
+
+retrieval_plan:
+  stage_1:
+    - tables
+    - metrics
+    - patterns
+  stage_2:
+    - columns
+    - relationships
+
+status:
+  integrated_with_runtime: false
+  notes:
+    - "当前仅落知识文件骨架，尚未接入 executor / reviewer / db_tool。"
+    - "后续接入时建议先做本地文件加载，再接 embedding 与向量检索。"

@@ -1,0 +1,28 @@
+id: metric.error_count
+kind: metric_definition
+title: 错误日志数量
+name: error_count
+summary: 统计 level = 'ERROR' 的日志条数。
+base_table: ops_log_event
+time_column: ts
+dimensions:
+  - service
+  - host
+  - error_code
+filters:
+  - "level = 'ERROR'"
+sql_template: "COUNT(*)"
+aliases:
+  - 错误数
+  - 异常数
+  - error volume
+notes:
+  - 用户问错误趋势时，通常需要按时间粒度聚合。
+  - 用户未指定服务时，可先全局统计。
+tags:
+  - metric
+  - error
+  - log
+source: "DataAnalyze/sql/dataanalyze_schema.sql"
+updated_at: "2026-04-23"
+enabled: true

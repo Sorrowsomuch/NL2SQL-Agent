@@ -1,0 +1,41 @@
+id: table.ops_log_event
+kind: table_profile
+title: 运维日志事件表
+table: ops_log_event
+summary: 存储系统日志与事件事实，是日志分析和错误趋势分析的主表。
+business_purpose:
+  - 支撑错误趋势查询
+  - 支撑服务延迟分析
+  - 支撑日志明细检索
+row_grain: 一行代表一条日志或事件
+primary_keys:
+  - id
+important_columns:
+  - id
+  - ts
+  - service
+  - host
+  - trace_id
+  - level
+  - error_code
+  - message
+  - latency_ms
+aliases:
+  - 日志表
+  - 事件表
+  - log event
+use_cases:
+  - 查询最近错误日志
+  - 按服务统计错误数
+  - 分析延迟与错误码分布
+avoid_when:
+  - 查询会话记忆时不应优先使用本表
+join_hints: []
+tags:
+  - log
+  - event
+  - error
+  - latency
+source: "DataAnalyze/sql/dataanalyze_schema.sql"
+updated_at: "2026-04-23"
+enabled: true

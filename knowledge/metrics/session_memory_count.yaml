@@ -1,0 +1,25 @@
+id: metric.session_memory_count
+kind: metric_definition
+title: 会话记忆条数
+name: session_memory_count
+summary: 统计某个会话或一组会话中的记忆记录数量。
+base_table: chat_memories
+time_column: created_at
+dimensions:
+  - session_id
+  - memory_layer
+  - memory_type
+filters: []
+sql_template: "COUNT(*)"
+aliases:
+  - 记忆条数
+  - session memory count
+notes:
+  - 如果用户关注摘要或事实层，通常需要结合 memory_layer 过滤。
+tags:
+  - metric
+  - memory
+  - session
+source: "DataAnalyze/sql/dataanalyze_schema.sql"
+updated_at: "2026-04-23"
+enabled: true

@@ -1,0 +1,27 @@
+id: column.chat_memories.session_id
+kind: column_semantics
+title: 会话标识
+table: chat_memories
+column: session_id
+summary: 记忆记录所属的会话标识。
+business_meaning: 用于把一条记忆归属到具体 session，也是与 chat_sessions 的主要关联键。
+aliases:
+  - 会话ID
+  - session id
+  - 对话ID
+examples:
+  - 查询某个 session 的完整记忆链路
+  - 将记忆表和会话表关联
+common_misunderstandings:
+  - 不是消息唯一 ID
+  - 不是用户 ID
+retrieval_keywords:
+  - 会话
+  - session
+  - 对话
+tags:
+  - session
+  - join_key
+source: "DataAnalyze/sql/dataanalyze_schema.sql"
+updated_at: "2026-04-23"
+enabled: true

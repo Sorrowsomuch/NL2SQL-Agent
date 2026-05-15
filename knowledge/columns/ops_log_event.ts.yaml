@@ -1,0 +1,27 @@
+id: column.ops_log_event.ts
+kind: column_semantics
+title: 事件时间
+table: ops_log_event
+column: ts
+summary: 日志或事件发生时间。
+business_meaning: 日志趋势分析、时间窗口过滤和按时间聚合的主时间字段。
+aliases:
+  - 时间
+  - 事件时间
+  - timestamp
+examples:
+  - 最近 24 小时错误趋势
+  - 按小时聚合错误数
+common_misunderstandings:
+  - 不是 created_at
+retrieval_keywords:
+  - 最近
+  - 趋势
+  - 时间窗口
+  - 过去24小时
+tags:
+  - log
+  - time
+source: "DataAnalyze/sql/dataanalyze_schema.sql"
+updated_at: "2026-04-23"
+enabled: true

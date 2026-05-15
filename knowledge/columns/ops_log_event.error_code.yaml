@@ -1,0 +1,27 @@
+id: column.ops_log_event.error_code
+kind: column_semantics
+title: 错误码
+table: ops_log_event
+column: error_code
+summary: 应用层错误码，用于细分错误类型。
+business_meaning: 在错误聚合、TopN 错误分析和根因定位时经常使用。
+aliases:
+  - 异常码
+  - code
+  - error code
+examples:
+  - 统计最常见错误码
+  - 按 error_code 分组查看故障分布
+common_misunderstandings:
+  - 不是 level
+  - 为空不代表没有异常上下文
+retrieval_keywords:
+  - 错误码
+  - TopN错误
+  - 异常类型
+tags:
+  - log
+  - error
+source: "DataAnalyze/sql/dataanalyze_schema.sql"
+updated_at: "2026-04-23"
+enabled: true

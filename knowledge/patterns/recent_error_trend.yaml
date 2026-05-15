@@ -1,0 +1,32 @@
+id: pattern.recent_error_trend
+kind: query_pattern
+title: 最近错误趋势
+user_queries:
+  - 最近错误趋势怎么样
+  - 过去24小时错误数变化
+  - 最近一周 error 数量走势
+intent:
+  metric: error_count
+  analysis_type: trend
+recommended_tables:
+  - ops_log_event
+recommended_columns:
+  - ts
+  - level
+  - service
+  - error_code
+recommended_group_by:
+  - time_bucket
+recommended_filters:
+  - "level = 'ERROR'"
+avoid_tables:
+  - chat_sessions
+  - chat_memories
+notes:
+  - 典型形式是按小时或按天聚合。
+tags:
+  - pattern
+  - log
+  - trend
+updated_at: "2026-04-23"
+enabled: true

@@ -1,0 +1,749 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DataAnalyze 调试页</title>
+  <style>
+    :root {
+      --bg: #f5f6f0;
+      --card: #fffef8;
+      --card-soft: #f8fbf7;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --border: #d8e0d5;
+      --primary: #0f766e;
+      --primary-soft: #ddf5ef;
+      --accent: #9a6700;
+      --accent-soft: #fff2d9;
+      --danger: #b42318;
+      --ok: #166534;
+      --shadow: 0 16px 34px rgba(16, 24, 40, 0.08);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--text);
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background:
+        radial-gradient(circle at top left, #ebf7f0 0, transparent 30%),
+        radial-gradient(circle at top right, #fff1dc 0, transparent 24%),
+        linear-gradient(180deg, #fafcf8 0%, var(--bg) 100%);
+    }
+    .hero {
+      max-width: 1440px;
+      margin: 0 auto;
+      padding: 28px 20px 12px;
+    }
+    .hero h1 {
+      margin: 0 0 8px;
+      font-size: 30px;
+      letter-spacing: 0.02em;
+    }
+    .hero p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .layout {
+      max-width: 1440px;
+      margin: 0 auto;
+      padding: 0 20px 24px;
+      display: grid;
+      grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+      gap: 16px;
+      align-items: start;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .card > header {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+      background: linear-gradient(90deg, var(--primary-soft), #fbfffd);
+    }
+    .card > header.warm {
+      background: linear-gradient(90deg, var(--accent-soft), #fffdfa);
+    }
+    .card > header h2 {
+      margin: 0;
+      font-size: 16px;
+    }
+    .body { padding: 16px; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .span-2 { grid-column: span 2; }
+    .span-4 { grid-column: span 4; }
+    label {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    input, textarea, select {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: #fff;
+      color: var(--text);
+      font-size: 13px;
+    }
+    textarea {
+      min-height: 120px;
+      resize: vertical;
+      line-height: 1.6;
+    }
+    .actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+    button {
+      border: 1px solid var(--primary);
+      border-radius: 12px;
+      background: var(--primary);
+      color: #fff;
+      padding: 10px 14px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button.secondary {
+      background: #fff;
+      color: #334155;
+      border-color: #94a3b8;
+    }
+    .status {
+      margin-top: 12px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px dashed var(--border);
+      background: #f8fafc;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .status.ok {
+      background: #f2fff5;
+      color: var(--ok);
+      border-color: #b7e4c2;
+    }
+    .status.err {
+      background: #fff5f5;
+      color: var(--danger);
+      border-color: #f1b4b4;
+    }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .metric {
+      padding: 12px;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: linear-gradient(180deg, #fff, var(--card-soft));
+    }
+    .metric small {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      font-size: 11px;
+    }
+    .metric strong {
+      font-size: 20px;
+    }
+    .stack {
+      display: grid;
+      gap: 12px;
+    }
+    .panel {
+      padding: 14px;
+      border-radius: 16px;
+      border: 1px solid var(--border);
+      background: var(--card-soft);
+    }
+    .panel h3 {
+      margin: 0 0 8px;
+      font-size: 14px;
+    }
+    .lead {
+      margin: 0;
+      line-height: 1.65;
+      white-space: pre-wrap;
+      font-size: 14px;
+    }
+    .list {
+      margin: 0;
+      padding-left: 18px;
+      line-height: 1.7;
+      font-size: 13px;
+    }
+    .tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      padding: 5px 10px;
+      border-radius: 999px;
+      background: var(--primary-soft);
+      color: #115e59;
+      font-size: 12px;
+    }
+    .review-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .review-item {
+      padding: 10px 12px;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: #fff;
+    }
+    .review-item .k {
+      margin-bottom: 4px;
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .review-item .v {
+      font-size: 13px;
+      line-height: 1.5;
+      word-break: break-word;
+    }
+    .chart {
+      min-height: 280px;
+      padding: 12px;
+      border-radius: 16px;
+      border: 1px solid var(--border);
+      background: #fcfeff;
+    }
+    .chart-title {
+      margin-bottom: 8px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .empty {
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    .data-table th,
+    .data-table td {
+      padding: 7px 8px;
+      border: 1px solid var(--border);
+      text-align: left;
+      vertical-align: top;
+    }
+    .data-table th { background: #f7fbf8; }
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 8px;
+      font-size: 12px;
+      color: #334155;
+    }
+    .dot {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      margin-right: 6px;
+    }
+    pre {
+      margin: 0;
+      padding: 12px;
+      border-radius: 14px;
+      background: #0f172a;
+      color: #dbeafe;
+      font-size: 12px;
+      line-height: 1.5;
+      overflow: auto;
+      max-height: 360px;
+    }
+    @media (max-width: 1080px) {
+      .layout { grid-template-columns: 1fr; }
+      .metrics { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 760px) {
+      .grid { grid-template-columns: 1fr 1fr; }
+      .span-4 { grid-column: span 2; }
+      .review-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <h1>DataAnalyze 调试页</h1>
+    <p>保留核心联调能力，聚焦每次对话的 SQL、LLM 分析、评审结果和 Memory / Schema 观察。</p>
+  </header>
+
+  <div class="layout">
+    <section class="card">
+      <header><h2>Chat 调试</h2></header>
+      <div class="body">
+        <div class="grid">
+          <div>
+            <label>Session ID</label>
+            <input id="sessionId" value="debug-session-001" />
+          </div>
+          <div>
+            <label>Max Retries</label>
+            <input id="maxRetries" type="number" value="2" min="0" max="5" />
+          </div>
+          <div>
+            <label>Layer Filter</label>
+            <select id="layerFilter">
+              <option value="">ALL</option>
+              <option value="L0_RAW">L0_RAW</option>
+              <option value="L1_SUMMARY">L1_SUMMARY</option>
+              <option value="L2_FACT">L2_FACT</option>
+            </select>
+          </div>
+          <div>
+            <label>Memory Limit</label>
+            <input id="memoryLimit" type="number" min="1" max="5000" value="200" />
+          </div>
+          <div class="span-4">
+            <label>Query</label>
+            <textarea id="queryText">统计最近20天每个服务每天的错误数，并且只保留那些当天错误数高于该服务近30天日均错误数1.5倍的记录，按超出倍数从高到低排序，同时返回该服务近30天日均错误数和当天错误占比。</textarea>
+          </div>
+          <div class="span-2">
+            <label>Include Compressed</label>
+            <select id="includeCompressed">
+              <option value="true">true</option>
+              <option value="false">false</option>
+            </select>
+          </div>
+          <div class="span-2">
+            <label>API Base</label>
+            <input id="apiBase" value="" placeholder="留空表示同源" />
+          </div>
+        </div>
+        <div class="actions">
+          <button id="runChat">发送 Chat 请求</button>
+          <button id="loadSchema" class="secondary">读取 Schema</button>
+          <button id="loadMemory" class="secondary">读取 Session Memory</button>
+        </div>
+        <div id="chatStatus" class="status">等待请求</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <header class="warm"><h2>本轮摘要</h2></header>
+      <div class="body stack">
+        <div class="metrics">
+          <div class="metric">
+            <small>State</small>
+            <strong id="summaryState">-</strong>
+          </div>
+          <div class="metric">
+            <small>Retry</small>
+            <strong id="summaryRetry">0</strong>
+          </div>
+          <div class="metric">
+            <small>Rows</small>
+            <strong id="summaryRows">0</strong>
+          </div>
+        </div>
+        <div class="panel">
+          <h3>SQL</h3>
+          <pre id="sqlPreview">暂无 SQL</pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <header><h2>LLM 分析</h2></header>
+      <div class="body stack">
+        <div class="panel">
+          <h3>分析结论</h3>
+          <p id="analysisText" class="lead">暂无分析结果</p>
+        </div>
+        <div class="panel">
+          <h3>专业发现</h3>
+          <ul id="analysisFindings" class="list"></ul>
+        </div>
+        <div class="panel">
+          <h3>建议</h3>
+          <ul id="analysisRecommendations" class="list"></ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <header class="warm"><h2>评审结果</h2></header>
+      <div class="body stack">
+        <div class="panel">
+          <h3>评审结论</h3>
+          <p id="reviewReason" class="lead">暂无评审结果</p>
+          <div id="reviewTags" class="tags"></div>
+        </div>
+        <div id="reviewGrid" class="review-grid"></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <header><h2>Chart 渲染</h2></header>
+      <div class="body">
+        <div id="chartRender" class="chart"></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <header><h2>原始响应</h2></header>
+      <div class="body">
+        <pre id="chatResult">{}</pre>
+      </div>
+    </section>
+
+    <section class="card">
+      <header><h2>Schema / Memory</h2></header>
+      <div class="body">
+        <pre id="auxResult">{}</pre>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const palette = ["#0f766e", "#1d4ed8", "#be185d", "#ca8a04", "#4338ca", "#0e7490"];
+
+    function baseUrl() {
+      return $("apiBase").value.trim() || "";
+    }
+
+    async function request(path, options = {}) {
+      const response = await fetch(baseUrl() + path, {
+        headers: { "Content-Type": "application/json" },
+        ...options,
+      });
+      const text = await response.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = { raw: text };
+      }
+      if (!response.ok) {
+        throw new Error(JSON.stringify(data, null, 2));
+      }
+      return data;
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function setStatus(ok, message) {
+      const el = $("chatStatus");
+      el.className = `status ${ok ? "ok" : "err"}`;
+      el.textContent = message;
+    }
+
+    function setJson(id, value) {
+      $(id).textContent = JSON.stringify(value, null, 2);
+    }
+
+    function renderList(id, items, emptyText) {
+      const root = $(id);
+      root.innerHTML = "";
+      if (!Array.isArray(items) || items.length === 0) {
+        root.innerHTML = `<li>${escapeHtml(emptyText)}</li>`;
+        return;
+      }
+      items.forEach((item) => {
+        const li = document.createElement("li");
+        li.textContent = String(item);
+        root.appendChild(li);
+      });
+    }
+
+    function renderSummary(data) {
+      $("summaryState").textContent = data.state || "-";
+      $("summaryRetry").textContent = String(data.retry_count ?? 0);
+      $("summaryRows").textContent = String((data.rows || []).length);
+      $("sqlPreview").textContent = data.sql || "暂无 SQL";
+    }
+
+    function renderAnalysis(data) {
+      $("analysisText").textContent = data.text_reply || "暂无分析结果";
+      renderList("analysisFindings", data.professional_findings || [], "暂无专业发现");
+      renderList("analysisRecommendations", data.recommendations || [], "暂无建议");
+    }
+
+    function renderReview(data) {
+      $("reviewReason").textContent = data.review_reason || "暂无评审结果";
+      const debug = data.review_debug || {};
+      const tags = [
+        data.success ? "执行成功" : "执行失败",
+        debug.mode ? `review:${debug.mode}` : "",
+        debug.query_planner_strategy ? `query-planner:${debug.query_planner_strategy}` : "",
+        debug.column_planner_strategy ? `field-planner:${debug.column_planner_strategy}` : "",
+      ].filter(Boolean);
+
+      const tagRoot = $("reviewTags");
+      tagRoot.innerHTML = "";
+      tags.forEach((tag) => {
+        const node = document.createElement("span");
+        node.className = "tag";
+        node.textContent = tag;
+        tagRoot.appendChild(node);
+      });
+
+      const items = [
+        ["审核模式", debug.mode],
+        ["Query Planner", debug.query_planner_strategy],
+        ["Query Type", debug.query_planner_query_type],
+        ["Primary Metric", debug.query_planner_primary_metric],
+        ["Hard Tables", (debug.query_planner_candidate_tables_hard || []).join(", ")],
+        ["Soft Tables", (debug.query_planner_candidate_tables_soft || []).join(", ")],
+        ["Field Planner", debug.column_planner_strategy],
+        ["Column Strategy", debug.column_selection_strategy],
+        ["SQL Guard", debug.sql_guard_outcome],
+        ["Schema Strategy", debug.schema_strategy],
+        ["Knowledge Strategy", debug.knowledge_strategy],
+        ["Prompt Budget", debug.prompt_budget],
+      ];
+
+      const grid = $("reviewGrid");
+      grid.innerHTML = "";
+      items.forEach(([label, value]) => {
+        const text = value === undefined || value === null || value === "" ? "-" : String(value);
+        const node = document.createElement("div");
+        node.className = "review-item";
+        node.innerHTML = `
+          <div class="k">${escapeHtml(label)}</div>
+          <div class="v">${escapeHtml(text)}</div>
+        `;
+        grid.appendChild(node);
+      });
+    }
+
+    function renderTable(rows) {
+      if (!rows || rows.length === 0) {
+        return '<div class="empty">无数据可展示</div>';
+      }
+      const columns = Object.keys(rows[0]);
+      const header = columns.map((key) => `<th>${escapeHtml(key)}</th>`).join("");
+      const body = rows.slice(0, 30).map((row) => {
+        const tds = columns.map((key) => `<td>${escapeHtml(row[key] ?? "")}</td>`).join("");
+        return `<tr>${tds}</tr>`;
+      }).join("");
+      return `<table class="data-table"><thead><tr>${header}</tr></thead><tbody>${body}</tbody></table>`;
+    }
+
+    function renderLineOrBar(chart, type) {
+      const xAxis = Array.isArray(chart.x_axis) ? chart.x_axis : [];
+      const series = Array.isArray(chart.series) ? chart.series : [];
+      if (xAxis.length === 0 || series.length === 0) {
+        return '<div class="empty">图表配置为空</div>';
+      }
+
+      const width = 860;
+      const height = 260;
+      const padding = 30;
+      const allValues = series.flatMap((item) => item.data || []).map(Number);
+      const max = Math.max(1, ...allValues);
+      const xStep = Math.max(1, (width - padding * 2) / Math.max(1, xAxis.length - (type === "line" ? 1 : 0)));
+
+      let svg = `<svg viewBox="0 0 ${width} ${height}" width="100%" height="260">`;
+      svg += `<line x1="${padding}" y1="${height - padding}" x2="${width - padding}" y2="${height - padding}" stroke="#94a3b8" />`;
+      svg += `<line x1="${padding}" y1="${padding}" x2="${padding}" y2="${height - padding}" stroke="#94a3b8" />`;
+
+      if (type === "bar") {
+        const totalSeries = Math.max(1, series.length);
+        const barWidth = Math.max(6, (xStep * 0.7) / totalSeries);
+        series.forEach((item, seriesIndex) => {
+          (item.data || []).forEach((value, index) => {
+            const numeric = Number(value || 0);
+            const barHeight = (numeric / max) * (height - padding * 2);
+            const x = padding + index * xStep + seriesIndex * barWidth + xStep * 0.1;
+            const y = height - padding - barHeight;
+            svg += `<rect x="${x}" y="${y}" width="${barWidth - 2}" height="${barHeight}" fill="${palette[seriesIndex % palette.length]}" rx="2" />`;
+          });
+        });
+      } else {
+        series.forEach((item, seriesIndex) => {
+          const points = (item.data || []).map((value, index) => {
+            const numeric = Number(value || 0);
+            const x = padding + index * xStep;
+            const y = height - padding - (numeric / max) * (height - padding * 2);
+            return `${x},${y}`;
+          }).join(" ");
+          svg += `<polyline points="${points}" fill="none" stroke="${palette[seriesIndex % palette.length]}" stroke-width="2.5" />`;
+          (item.data || []).forEach((value, index) => {
+            const numeric = Number(value || 0);
+            const x = padding + index * xStep;
+            const y = height - padding - (numeric / max) * (height - padding * 2);
+            svg += `<circle cx="${x}" cy="${y}" r="3" fill="${palette[seriesIndex % palette.length]}" />`;
+          });
+        });
+      }
+
+      xAxis.slice(0, 20).forEach((label, index) => {
+        const x = padding + index * xStep;
+        svg += `<text x="${x}" y="${height - 8}" font-size="10" fill="#475569" text-anchor="middle">${escapeHtml(label)}</text>`;
+      });
+      svg += "</svg>";
+
+      const legend = series.map((item, index) => (
+        `<span><i class="dot" style="background:${palette[index % palette.length]}"></i>${escapeHtml(item.name || `S${index + 1}`)}</span>`
+      )).join("");
+
+      return svg + `<div class="legend">${legend}</div>`;
+    }
+
+    function renderPie(chart) {
+      const series = Array.isArray(chart.series) ? chart.series : [];
+      const values = (series[0] && Array.isArray(series[0].data) ? series[0].data : []).map(Number);
+      const labels = Array.isArray(chart.x_axis) ? chart.x_axis : values.map((_, index) => `Item ${index + 1}`);
+      if (values.length === 0) {
+        return '<div class="empty">饼图数据为空</div>';
+      }
+      const total = values.reduce((sum, value) => sum + Math.max(0, value), 0) || 1;
+      const cx = 140;
+      const cy = 130;
+      const r = 95;
+      let angle = -Math.PI / 2;
+      let svg = '<svg viewBox="0 0 320 260" width="100%" height="260">';
+      values.forEach((value, index) => {
+        const slice = (Math.max(0, value) / total) * Math.PI * 2;
+        const x1 = cx + r * Math.cos(angle);
+        const y1 = cy + r * Math.sin(angle);
+        const x2 = cx + r * Math.cos(angle + slice);
+        const y2 = cy + r * Math.sin(angle + slice);
+        const large = slice > Math.PI ? 1 : 0;
+        const d = `M ${cx} ${cy} L ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2} Z`;
+        svg += `<path d="${d}" fill="${palette[index % palette.length]}" />`;
+        angle += slice;
+      });
+      svg += "</svg>";
+
+      const legend = values.map((value, index) => (
+        `<span><i class="dot" style="background:${palette[index % palette.length]}"></i>${escapeHtml(labels[index] || `Item ${index + 1}`)}: ${value}</span>`
+      )).join("");
+
+      return svg + `<div class="legend">${legend}</div>`;
+    }
+
+    function renderChart(chart, rows) {
+      const root = $("chartRender");
+      if (!chart) {
+        root.innerHTML = '<div class="empty">响应中无 chart 配置，展示 rows 表格</div>' + renderTable(rows);
+        return;
+      }
+
+      const title = `<div class="chart-title">${escapeHtml(chart.title || "分析结果")}</div>`;
+      if (chart.chart_type === "bar") {
+        root.innerHTML = title + renderLineOrBar(chart, "bar");
+        return;
+      }
+      if (chart.chart_type === "line") {
+        root.innerHTML = title + renderLineOrBar(chart, "line");
+        return;
+      }
+      if (chart.chart_type === "pie") {
+        root.innerHTML = title + renderPie(chart);
+        return;
+      }
+      root.innerHTML = title + renderTable(rows);
+    }
+
+    function clearPanels() {
+      renderSummary({ state: "-", retry_count: 0, rows: [], sql: "" });
+      renderAnalysis({});
+      renderReview({});
+      renderChart(null, []);
+    }
+
+    async function runChat() {
+      try {
+        setStatus(true, "请求中...");
+        const payload = {
+          session_id: $("sessionId").value.trim(),
+          query: $("queryText").value,
+          max_retries: Number($("maxRetries").value || 2),
+        };
+        const data = await request("/chat", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        setJson("chatResult", data);
+        renderSummary(data);
+        renderAnalysis(data);
+        renderReview(data);
+        renderChart(data.chart, data.rows || []);
+        setStatus(true, "请求成功");
+      } catch (error) {
+        setStatus(false, "请求失败");
+        setJson("chatResult", { error: String(error) });
+        clearPanels();
+      }
+    }
+
+    async function loadSchema() {
+      try {
+        const data = await request("/schema");
+        setJson("auxResult", data);
+      } catch (error) {
+        setJson("auxResult", { error: String(error) });
+      }
+    }
+
+    async function loadMemory() {
+      try {
+        const sessionId = $("sessionId").value.trim();
+        const limit = Number($("memoryLimit").value || 200);
+        const layer = $("layerFilter").value;
+        const includeCompressed = $("includeCompressed").value;
+        const params = new URLSearchParams({
+          limit: String(limit),
+          include_compressed: includeCompressed,
+        });
+        if (layer) {
+          params.set("layer", layer);
+        }
+        const data = await request(`/sessions/${encodeURIComponent(sessionId)}/memory?${params.toString()}`);
+        setJson("auxResult", data);
+      } catch (error) {
+        setJson("auxResult", { error: String(error) });
+      }
+    }
+
+    $("runChat").addEventListener("click", runChat);
+    $("loadSchema").addEventListener("click", loadSchema);
+    $("loadMemory").addEventListener("click", loadMemory);
+
+    clearPanels();
+    setJson("chatResult", {});
+    setJson("auxResult", {});
+  </script>
+</body>
+</html>

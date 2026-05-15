@@ -1,0 +1,20 @@
+id: relation.chat_memories.chat_sessions
+kind: relationship_hint
+title: 记忆表关联会话主表
+from_table: chat_memories
+from_columns:
+  - session_id
+to_table: chat_sessions
+to_columns:
+  - session_id
+join_type: many_to_one
+summary: 通过 session_id 将记忆记录关联到会话主表。
+join_sql_example: "chat_memories m LEFT JOIN chat_sessions s ON s.session_id = m.session_id"
+confidence: high
+source: "schema_and_business_rule"
+tags:
+  - join
+  - session
+  - memory
+updated_at: "2026-04-23"
+enabled: true

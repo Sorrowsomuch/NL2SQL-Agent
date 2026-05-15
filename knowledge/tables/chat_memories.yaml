@@ -1,0 +1,39 @@
+id: table.chat_memories
+kind: table_profile
+title: 会话记忆表
+table: chat_memories
+summary: 存储会话中的原始消息、摘要记忆和事实记忆。
+business_purpose:
+  - 支撑多轮对话记忆
+  - 支撑上下文压缩
+  - 支撑事实提取与重排
+row_grain: 一行代表一条记忆记录
+primary_keys:
+  - id
+important_columns:
+  - id
+  - session_id
+  - role
+  - memory_layer
+  - memory_type
+  - content
+  - created_at
+aliases:
+  - 记忆表
+  - 对话记忆表
+  - memory store
+use_cases:
+  - 查询某个 session 的历史消息
+  - 查看 L0/L1/L2 记忆分层
+  - 排查事实提取是否正确
+avoid_when:
+  - 单纯查询错误日志或延迟趋势时不应优先使用本表
+join_hints:
+  - chat_memories.session_id -> chat_sessions.session_id
+tags:
+  - session
+  - memory
+  - chat
+source: "DataAnalyze/sql/dataanalyze_schema.sql"
+updated_at: "2026-04-23"
+enabled: true

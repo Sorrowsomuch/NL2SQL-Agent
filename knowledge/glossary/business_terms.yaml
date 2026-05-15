@@ -1,0 +1,43 @@
+id: glossary.business_terms
+kind: glossary
+title: DataAnalyze 业务术语表
+summary: 维护业务词、英文别名与知识对象之间的映射，供后续召回与重排使用。
+terms:
+  - term: 会话
+    aliases:
+      - session
+      - 对话
+    maps_to:
+      tables:
+        - chat_sessions
+        - chat_memories
+  - term: 记忆
+    aliases:
+      - memory
+      - 对话记忆
+    maps_to:
+      tables:
+        - chat_memories
+      columns:
+        - chat_memories.memory_layer
+  - term: 错误
+    aliases:
+      - error
+      - 异常
+    maps_to:
+      tables:
+        - ops_log_event
+      columns:
+        - ops_log_event.level
+        - ops_log_event.error_code
+      metrics:
+        - error_count
+  - term: 延迟
+    aliases:
+      - latency
+      - rt
+    maps_to:
+      tables:
+        - ops_log_event
+updated_at: "2026-04-23"
+enabled: true

@@ -1,0 +1,32 @@
+id: column.chat_memories.memory_layer
+kind: column_semantics
+title: 记忆层级
+table: chat_memories
+column: memory_layer
+summary: 标识该条记忆属于原始消息、摘要还是事实层。
+business_meaning: 区分 L0_RAW、L1_SUMMARY、L2_FACT，是记忆分层查询的关键字段。
+aliases:
+  - 记忆层
+  - memory level
+allowed_values:
+  - L0_RAW
+  - L1_SUMMARY
+  - L2_FACT
+examples:
+  - 查看原始对话时过滤 L0_RAW
+  - 查看压缩摘要时过滤 L1_SUMMARY
+  - 查看稳定事实时过滤 L2_FACT
+common_misunderstandings:
+  - 不是 role
+  - 不是 memory_type 的替代字段
+retrieval_keywords:
+  - 原始消息
+  - 摘要
+  - 事实
+  - 记忆分层
+tags:
+  - memory
+  - enum
+source: "DataAnalyze/core/memory.py"
+updated_at: "2026-04-23"
+enabled: true

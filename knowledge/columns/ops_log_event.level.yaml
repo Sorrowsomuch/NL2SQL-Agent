@@ -1,0 +1,31 @@
+id: column.ops_log_event.level
+kind: column_semantics
+title: 日志级别
+table: ops_log_event
+column: level
+summary: 日志严重程度，用于区分 ERROR/WARN/INFO 等等级。
+business_meaning: 错误数、告警数和正常日志数通常都依赖该字段过滤或分组。
+aliases:
+  - 日志等级
+  - severity
+  - level
+allowed_values:
+  - ERROR
+  - WARN
+  - INFO
+examples:
+  - 统计错误日志数量时过滤 ERROR
+  - 比较不同等级日志分布
+common_misunderstandings:
+  - 不是 error_code
+retrieval_keywords:
+  - 错误
+  - 告警
+  - info
+  - 日志级别
+tags:
+  - log
+  - severity
+source: "DataAnalyze/sql/dataanalyze_schema.sql"
+updated_at: "2026-04-23"
+enabled: true

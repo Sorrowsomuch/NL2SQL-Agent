@@ -1,0 +1,33 @@
+id: pattern.session_memory_lookup
+kind: query_pattern
+title: 会话记忆查看
+user_queries:
+  - 查看某个会话的记忆
+  - 查询 session 的历史摘要
+  - 看看这个 session 的事实层记录
+intent:
+  metric: session_memory_count
+  analysis_type: lookup
+recommended_tables:
+  - chat_memories
+  - chat_sessions
+recommended_columns:
+  - session_id
+  - role
+  - memory_layer
+  - memory_type
+  - content
+  - created_at
+recommended_group_by: []
+recommended_filters:
+  - "按需要过滤 memory_layer"
+avoid_tables:
+  - ops_log_event
+notes:
+  - 如果用户明确提到 session 标题，可关联 chat_sessions。
+tags:
+  - pattern
+  - session
+  - memory
+updated_at: "2026-04-23"
+enabled: true

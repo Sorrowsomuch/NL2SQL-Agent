@@ -1,0 +1,649 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Perfetto Agent 调试</title>
+  <style>
+    :root {
+      --bg: #f5f7f9;
+      --panel: #ffffff;
+      --soft: #eef7f6;
+      --text: #1f2937;
+      --muted: #64748b;
+      --line: #d8e1e7;
+      --primary: #0f766e;
+      --primary-dark: #115e59;
+      --danger: #b42318;
+      --ok: #166534;
+      --warn: #9a6700;
+      --code: #111827;
+      --shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--text);
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: linear-gradient(180deg, #fbfcfd 0%, var(--bg) 100%);
+    }
+
+    header.top {
+      padding: 22px 24px 14px;
+      border-bottom: 1px solid var(--line);
+      background: #fff;
+    }
+
+    .top-inner {
+      max-width: 1480px;
+      margin: 0 auto;
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    h1 {
+      margin: 0 0 6px;
+      font-size: 26px;
+      line-height: 1.2;
+      font-weight: 750;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .status {
+      min-width: 190px;
+      padding: 9px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--soft);
+      font-size: 13px;
+      color: var(--muted);
+      text-align: right;
+    }
+
+    main {
+      max-width: 1480px;
+      margin: 0 auto;
+      padding: 18px 24px 26px;
+      display: grid;
+      grid-template-columns: minmax(360px, 0.86fr) minmax(560px, 1.14fr);
+      gap: 16px;
+      align-items: start;
+    }
+
+    section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    section > h2 {
+      margin: 0;
+      padding: 12px 14px;
+      font-size: 15px;
+      border-bottom: 1px solid var(--line);
+      background: #fbfdfd;
+    }
+
+    .body { padding: 14px; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    label {
+      display: block;
+      margin: 0 0 6px;
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 650;
+    }
+
+    input, textarea, select {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 9px 10px;
+      color: var(--text);
+      background: #fff;
+      font: inherit;
+      font-size: 14px;
+      outline: none;
+    }
+
+    textarea {
+      min-height: 88px;
+      resize: vertical;
+      line-height: 1.5;
+    }
+
+    input:focus, textarea:focus, select:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12);
+    }
+
+    .field { margin-bottom: 12px; }
+
+    .actions, .quick {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .actions { margin-top: 12px; }
+    .quick { margin-bottom: 12px; }
+
+    button {
+      border: 1px solid transparent;
+      border-radius: 6px;
+      padding: 9px 13px;
+      background: var(--primary);
+      color: #fff;
+      font: inherit;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    button.secondary {
+      background: #fff;
+      color: var(--primary-dark);
+      border-color: var(--line);
+    }
+
+    .quick button {
+      padding: 7px 10px;
+      background: var(--soft);
+      color: var(--primary-dark);
+      border-color: #c8dddd;
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    button:disabled {
+      opacity: 0.58;
+      cursor: wait;
+    }
+
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    .tile {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      background: #fbfdfd;
+      min-height: 72px;
+    }
+
+    .tile strong {
+      display: block;
+      margin-bottom: 7px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .tile span {
+      display: block;
+      overflow-wrap: anywhere;
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .ok { color: var(--ok); }
+    .bad { color: var(--danger); }
+    .warn { color: var(--warn); }
+
+    .tabs {
+      display: flex;
+      gap: 6px;
+      border-bottom: 1px solid var(--line);
+      padding: 0 14px;
+      background: #fff;
+    }
+
+    .tab {
+      border: 0;
+      border-bottom: 3px solid transparent;
+      border-radius: 0;
+      padding: 10px 8px 8px;
+      color: var(--muted);
+      background: transparent;
+      font-size: 13px;
+    }
+
+    .tab.active {
+      color: var(--primary-dark);
+      border-bottom-color: var(--primary);
+    }
+
+    .panel { display: none; }
+    .panel.active { display: block; }
+
+    pre {
+      margin: 0;
+      padding: 12px;
+      max-height: 520px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--code);
+      color: #e5e7eb;
+      font: 12px/1.55 Consolas, "Cascadia Mono", monospace;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .list { display: grid; gap: 8px; }
+
+    .item {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      background: #fff;
+      margin-bottom: 8px;
+    }
+
+    .item-title {
+      margin-bottom: 5px;
+      font-weight: 750;
+      font-size: 13px;
+    }
+
+    .item-text {
+      color: var(--text);
+      font-size: 13px;
+      line-height: 1.55;
+      overflow-wrap: anywhere;
+    }
+
+    .empty {
+      padding: 18px;
+      border: 1px dashed var(--line);
+      border-radius: 8px;
+      color: var(--muted);
+      text-align: center;
+      background: #fbfdfd;
+      font-size: 13px;
+    }
+
+    .call {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      background: #fff;
+      margin-bottom: 10px;
+    }
+
+    .call-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      gap: 10px;
+      align-items: center;
+      padding: 9px 10px;
+      border-bottom: 1px solid var(--line);
+      background: #fbfdfd;
+      font-size: 13px;
+    }
+
+    .call-name {
+      font-weight: 800;
+      overflow-wrap: anywhere;
+    }
+
+    .call-body { padding: 10px; }
+    .call-body pre { max-height: 360px; }
+
+    @media (max-width: 980px) {
+      .top-inner, main { display: block; }
+      .status { margin-top: 12px; text-align: left; }
+      main { padding: 14px; }
+      section { margin-bottom: 14px; }
+      .summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 560px) {
+      .grid, .summary { grid-template-columns: 1fr; }
+      header.top { padding: 18px 14px 12px; }
+      h1 { font-size: 22px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div class="top-inner">
+      <div>
+        <h1>Perfetto Agent 调试</h1>
+        <p class="subtitle">调试 output.pb 的“性能问题 -> SQL -> 指标 -> 结论”链路，包含 LLM 输出和 tool_calls。</p>
+      </div>
+      <div id="status" class="status">未请求</div>
+    </div>
+  </header>
+
+  <main>
+    <section>
+      <h2>请求</h2>
+      <div class="body">
+        <div class="quick">
+          <button type="button" data-problem="分析主线程卡顿">主线程卡顿</button>
+          <button type="button" data-problem="分析 CPU 占用">CPU 占用</button>
+          <button type="button" data-problem="找出耗时超过 16ms 的 slice">长耗时 slice</button>
+        </div>
+
+        <div class="field">
+          <label for="problem">problem</label>
+          <textarea id="problem">分析主线程卡顿</textarea>
+        </div>
+
+        <div class="grid">
+          <div class="field">
+            <label for="sessionId">session_id</label>
+            <input id="sessionId" value="perfetto-debug-s1" />
+          </div>
+          <div class="field">
+            <label for="datasetId">dataset_id</label>
+            <input id="datasetId" value="default-output-pb" />
+          </div>
+          <div class="field">
+            <label for="traceId">trace_id</label>
+            <input id="traceId" placeholder="可选" />
+          </div>
+          <div class="field">
+            <label for="mode">analysis_mode</label>
+            <select id="mode">
+              <option value="auto">auto</option>
+              <option value="template">template</option>
+              <option value="llm">llm</option>
+              <option value="sql_debug">sql_debug</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="threshold">threshold_ms</label>
+            <input id="threshold" type="number" value="16" min="0" step="1" />
+          </div>
+          <div class="field">
+            <label for="limit">limit</label>
+            <input id="limit" type="number" value="20" min="1" max="200" step="1" />
+          </div>
+        </div>
+
+        <div class="actions">
+          <button id="runBtn" type="button">运行 /perfetto/agent</button>
+          <button id="schemaBtn" class="secondary" type="button">查看 schema</button>
+          <button id="clearBtn" class="secondary" type="button">清空结果</button>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>响应</h2>
+      <div class="body">
+        <div class="summary">
+          <div class="tile"><strong>success</strong><span id="summarySuccess">-</span></div>
+          <div class="tile"><strong>source_type</strong><span id="summarySource">-</span></div>
+          <div class="tile"><strong>dataset_id</strong><span id="summaryDataset">-</span></div>
+          <div class="tile"><strong>analysis_type</strong><span id="summaryType">-</span></div>
+        </div>
+
+        <div class="tabs">
+          <button class="tab active" data-tab="overview" type="button">概览</button>
+          <button class="tab" data-tab="sql" type="button">SQL</button>
+          <button class="tab" data-tab="calls" type="button">Tool Calls</button>
+          <button class="tab" data-tab="raw" type="button">Raw JSON</button>
+        </div>
+
+        <div id="overview" class="panel active body">
+          <div id="overviewContent" class="empty">运行一次请求后，这里会展示指标、证据、结论和 Reviewer 结果。</div>
+        </div>
+
+        <div id="sql" class="panel body">
+          <pre id="sqlText">暂无 SQL</pre>
+        </div>
+
+        <div id="calls" class="panel body">
+          <div id="callsContent" class="empty">暂无 tool calls</div>
+        </div>
+
+        <div id="raw" class="panel body">
+          <pre id="rawText">暂无响应</pre>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const status = $("status");
+    const runBtn = $("runBtn");
+    const schemaBtn = $("schemaBtn");
+    const clearBtn = $("clearBtn");
+
+    function setStatus(text, kind = "") {
+      status.textContent = text;
+      status.className = "status " + kind;
+    }
+
+    function buildRequest() {
+      const traceId = $("traceId").value.trim();
+      return {
+        session_id: $("sessionId").value.trim() || "perfetto-debug-s1",
+        problem: $("problem").value.trim() || "分析主线程卡顿",
+        dataset_id: $("datasetId").value.trim() || "default-output-pb",
+        trace_id: traceId || null,
+        analysis_mode: $("mode").value,
+        threshold_ms: Number($("threshold").value || 16),
+        limit: Number($("limit").value || 20)
+      };
+    }
+
+    function pretty(value) {
+      return JSON.stringify(value, null, 2);
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function setSummary(data) {
+      $("summarySuccess").textContent = String(data.success ?? "-");
+      $("summarySuccess").className = data.success ? "ok" : "bad";
+      $("summarySource").textContent = data.source_type || "-";
+      $("summaryDataset").textContent = data.dataset_id || "-";
+      $("summaryType").textContent = data.analysis_type || "-";
+    }
+
+    function renderList(title, rows, mapper) {
+      if (!rows || rows.length === 0) return "";
+      const items = rows.map((row) => `
+        <div class="item">
+          <div class="item-title">${escapeHtml(mapper.title(row))}</div>
+          <div class="item-text">${escapeHtml(mapper.text(row))}</div>
+        </div>
+      `).join("");
+      return `<h3>${title}</h3><div class="list">${items}</div>`;
+    }
+
+    function renderOverview(data) {
+      if (!data || Object.keys(data).length === 0) {
+        $("overviewContent").className = "empty";
+        $("overviewContent").textContent = "暂无结果";
+        return;
+      }
+
+      const review = data.review || {};
+      const metricsHtml = renderList("指标", data.metrics, {
+        title: (m) => m.name || "metric",
+        text: (m) => `${m.value ?? ""}${m.unit ? " " + m.unit : ""}${m.interpretation ? " - " + m.interpretation : ""}`
+      });
+      const evidenceHtml = renderList("证据", data.evidence, {
+        title: () => "evidence",
+        text: (e) => typeof e === "string" ? e : pretty(e)
+      });
+      const recHtml = renderList("建议", data.recommendations, {
+        title: () => "recommendation",
+        text: (r) => typeof r === "string" ? r : pretty(r)
+      });
+
+      $("overviewContent").className = "";
+      $("overviewContent").innerHTML = `
+        <div class="item">
+          <div class="item-title">结论</div>
+          <div class="item-text">${escapeHtml(data.conclusion || data.error_reason || "暂无结论")}</div>
+        </div>
+        <div class="item">
+          <div class="item-title">Review</div>
+          <div class="item-text ${review.approved ? "ok" : "warn"}">
+            ${escapeHtml(String(review.approved ?? "-"))} ${escapeHtml(review.reason || "")}
+          </div>
+        </div>
+        ${metricsHtml || '<div class="empty">暂无指标</div>'}
+        ${evidenceHtml || '<div class="empty">暂无证据</div>'}
+        ${recHtml || ""}
+      `;
+    }
+
+    function renderToolCalls(calls) {
+      if (!calls || calls.length === 0) {
+        $("callsContent").className = "empty";
+        $("callsContent").textContent = "暂无 tool calls";
+        return;
+      }
+
+      $("callsContent").className = "";
+      $("callsContent").innerHTML = calls.map((call, index) => `
+        <div class="call">
+          <div class="call-head">
+            <span class="call-name">${index + 1}. ${escapeHtml(call.tool_name || "tool")}</span>
+            <span class="${call.success ? "ok" : "bad"}">${escapeHtml(String(call.success))}</span>
+            <span>${escapeHtml(String(call.duration_ms ?? 0))} ms</span>
+          </div>
+          <div class="call-body">
+            <div class="item">
+              <div class="item-title">output_preview</div>
+              <div class="item-text">${escapeHtml(call.output_preview || "")}</div>
+            </div>
+            <pre>${escapeHtml(pretty(call.arguments || {}))}</pre>
+          </div>
+        </div>
+      `).join("");
+    }
+
+    function renderResponse(data) {
+      setSummary(data);
+      renderOverview(data);
+      renderToolCalls(data.tool_calls || []);
+      $("sqlText").textContent = data.sql || "暂无 SQL";
+      $("rawText").textContent = pretty(data);
+    }
+
+    async function postAgent() {
+      const payload = buildRequest();
+      runBtn.disabled = true;
+      setStatus("请求中...", "warn");
+      try {
+        const res = await fetch("/perfetto/agent", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        renderResponse(data);
+        setStatus(res.ok && data.success ? "请求成功" : "请求完成但未通过", res.ok && data.success ? "ok" : "bad");
+      } catch (err) {
+        renderResponse({ success: false, error_reason: String(err), tool_calls: [] });
+        setStatus("请求失败", "bad");
+      } finally {
+        runBtn.disabled = false;
+      }
+    }
+
+    async function loadSchema() {
+      schemaBtn.disabled = true;
+      setStatus("读取 schema...", "warn");
+      try {
+        const res = await fetch("/perfetto/schema");
+        const data = await res.json();
+        setSummary({
+          success: res.ok,
+          source_type: "trace_processor",
+          dataset_id: $("datasetId").value,
+          analysis_type: "schema"
+        });
+        $("overviewContent").className = "";
+        $("overviewContent").innerHTML = `
+          <div class="item">
+            <div class="item-title">trace_path</div>
+            <div class="item-text">${escapeHtml(data.trace_path || "")}</div>
+          </div>
+          <div class="item">
+            <div class="item-title">trace_processor_path</div>
+            <div class="item-text">${escapeHtml(data.trace_processor_path || "auto")}</div>
+          </div>
+        `;
+        $("sqlText").textContent = "GET /perfetto/schema";
+        renderToolCalls([]);
+        $("rawText").textContent = pretty(data);
+        setStatus("schema 已读取", res.ok ? "ok" : "bad");
+      } catch (err) {
+        renderResponse({ success: false, error_reason: String(err), tool_calls: [] });
+        setStatus("schema 读取失败", "bad");
+      } finally {
+        schemaBtn.disabled = false;
+      }
+    }
+
+    function clearResult() {
+      setSummary({});
+      renderToolCalls([]);
+      $("overviewContent").className = "empty";
+      $("overviewContent").textContent = "运行一次请求后，这里会展示指标、证据、结论和 Reviewer 结果。";
+      $("sqlText").textContent = "暂无 SQL";
+      $("rawText").textContent = "暂无响应";
+      setStatus("已清空");
+    }
+
+    document.querySelectorAll(".quick button").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        $("problem").value = btn.dataset.problem;
+      });
+    });
+
+    document.querySelectorAll(".tab").forEach((tab) => {
+      tab.addEventListener("click", () => {
+        document.querySelectorAll(".tab").forEach((item) => item.classList.remove("active"));
+        document.querySelectorAll(".panel").forEach((item) => item.classList.remove("active"));
+        tab.classList.add("active");
+        $(tab.dataset.tab).classList.add("active");
+      });
+    });
+
+    runBtn.addEventListener("click", postAgent);
+    schemaBtn.addEventListener("click", loadSchema);
+    clearBtn.addEventListener("click", clearResult);
+  </script>
+</body>
+</html>

@@ -1,0 +1,33 @@
+id: table.chat_sessions
+kind: table_profile
+title: 会话主表
+table: chat_sessions
+summary: 存储会话级元信息，例如会话标识、标题和更新时间。
+business_purpose:
+  - 管理会话主实体
+  - 为记忆表提供会话维度
+row_grain: 一行代表一个 session
+primary_keys:
+  - session_id
+important_columns:
+  - session_id
+  - title
+  - created_at
+  - updated_at
+aliases:
+  - 会话表
+  - session 表
+  - chat session
+use_cases:
+  - 查询某个 session 是否存在
+  - 查看会话标题和更新时间
+avoid_when:
+  - 只分析日志错误趋势时不应优先使用本表
+join_hints:
+  - chat_sessions.session_id -> chat_memories.session_id
+tags:
+  - session
+  - chat
+source: "DataAnalyze/sql/dataanalyze_schema.sql"
+updated_at: "2026-04-23"
+enabled: true
