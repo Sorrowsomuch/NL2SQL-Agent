@@ -1,0 +1,20 @@
+id: perfetto.pattern.cpu_time
+kind: query_pattern
+title: Perfetto CPU time analysis
+summary: Sum sched.dur by thread/process to identify CPU hot spots.
+recommended_tables:
+  - sched
+  - thread
+  - process
+recommended_columns:
+  - sched.dur
+  - sched.cpu
+  - thread.name
+  - process.name
+intent:
+  metric: cpu_time_ms
+  analysis_type: topn
+tags:
+  - perfetto
+  - cpu
+enabled: true

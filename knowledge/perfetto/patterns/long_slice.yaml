@@ -1,0 +1,23 @@
+id: perfetto.pattern.long_slice
+kind: query_pattern
+title: Perfetto long slice analysis
+summary: Find long-running slices and join them to thread/process metadata.
+recommended_tables:
+  - slice
+  - thread_track
+  - thread
+  - process
+recommended_columns:
+  - slice.name
+  - slice.ts
+  - slice.dur
+  - thread.name
+  - process.name
+intent:
+  metric: duration_ms
+  analysis_type: topn
+tags:
+  - perfetto
+  - long_slice
+  - jank
+enabled: true

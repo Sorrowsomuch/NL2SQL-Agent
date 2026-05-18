@@ -1,0 +1,18 @@
+id: perfetto.pattern.frame_jank
+kind: query_pattern
+title: Perfetto frame and jank analysis
+summary: Use frame timeline tables when the question asks about frame duration or jank.
+recommended_tables:
+  - actual_frame_timeline_slice
+  - expected_frame_timeline_slice
+recommended_columns:
+  - actual_frame_timeline_slice.dur
+  - actual_frame_timeline_slice.jank_type
+intent:
+  metric: frame_duration_ms
+  analysis_type: topn
+tags:
+  - perfetto
+  - frame
+  - jank
+enabled: true

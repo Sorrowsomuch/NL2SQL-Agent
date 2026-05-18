@@ -43,3 +43,10 @@
 - `07_生产复杂查询推进路线图.md`：补充 trace 性能分析和普通 PostgreSQL 复杂查询的差异。
 
 约定：以后只要新增接口、工具、数据源、planner 或审核规则，都要同步更新本目录下对应文档。对于影响主链路的改动，至少更新“系统现状”和“近期行动清单”；对于新增架构取舍，必须更新“架构决策记录”。
+## 2026-05-15 补充
+
+Perfetto 当前主线说明请优先阅读：
+
+- `09_Perfetto复用原双Agent当前说明.md`
+
+该文档覆盖最新接线：`/perfetto/agent(analysis_mode=llm)` 复用原 `ExecutorAgent + ReviewerAgent`，仅把 SQL 工具切换为 `PerfettoTool`。

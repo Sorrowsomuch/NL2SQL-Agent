@@ -1,0 +1,16 @@
+id: perfetto.metric.duration_ms
+kind: metric_definition
+title: Perfetto duration in milliseconds
+summary: Perfetto durations are usually stored in nanoseconds. Convert to milliseconds with dur / 1e6.
+recommended_tables:
+  - slice
+  - sched
+  - actual_frame_timeline_slice
+recommended_columns:
+  - dur
+formula: dur / 1e6
+unit: ms
+tags:
+  - perfetto
+  - metric
+enabled: true

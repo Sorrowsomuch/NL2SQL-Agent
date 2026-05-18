@@ -1,0 +1,19 @@
+id: perfetto.table.expected_frame_timeline_slice
+kind: table_profile
+title: Perfetto expected frame timeline slice table
+table: expected_frame_timeline_slice
+summary: Android expected frame timeline data used to compare expected and actual frame timing.
+row_grain: one expected frame
+important_columns:
+  - id
+  - ts
+  - dur
+  - name
+aliases:
+  - frame
+  - expected frame
+tags:
+  - perfetto
+  - trace
+  - frame
+enabled: true

@@ -9,7 +9,6 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 
 from DataAnalyze.agents.executor import ExecutorAgent
 from DataAnalyze.agents.perfetto_agent import PerfettoAgent
-from DataAnalyze.agents.perfetto_executor import PerfettoExecutorAgent
 from DataAnalyze.agents.perfetto_reviewer import PerfettoReviewer
 from DataAnalyze.agents.reviewer import ReviewerAgent
 from DataAnalyze.core.memory import MemoryManager
@@ -41,13 +40,32 @@ memory_manager = MemoryManager()
 db_tool = DatabaseTool()
 perfetto_tool = PerfettoTool()
 perfetto_source = TraceProcessorPerfettoSource(tool=perfetto_tool)
-perfetto_executor = PerfettoExecutorAgent(perfetto_tool=perfetto_tool)
+monitor = ConsoleMonitor()
+perfetto_executor = ExecutorAgent(
+    db_tool=perfetto_tool,
+    memory_manager=memory_manager,
+    monitor=monitor,
+    dialect="perfetto",
+    tool_label="perfetto_trace_processor",
+)
+perfetto_reviewer_agent = ReviewerAgent(
+    sql_validator=perfetto_tool.validate_sql,
+    require_chart_for_analysis=False,
+    domain_label="perfetto",
+)
+perfetto_workflow = WorkflowEngine(
+    executor=perfetto_executor,
+    reviewer=perfetto_reviewer_agent,
+    memory_manager=memory_manager,
+    max_retries=2,
+)
 perfetto_agent = PerfettoAgent(
     data_source=perfetto_source,
     reviewer=PerfettoReviewer(),
     executor=perfetto_executor,
+    reviewer_agent=perfetto_reviewer_agent,
+    workflow=perfetto_workflow,
 )
-monitor = ConsoleMonitor()
 executor = ExecutorAgent(db_tool=db_tool, memory_manager=memory_manager, monitor=monitor)
 reviewer = ReviewerAgent()
 workflow = WorkflowEngine(

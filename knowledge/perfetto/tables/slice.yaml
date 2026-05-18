@@ -1,0 +1,34 @@
+id: perfetto.table.slice
+kind: table_profile
+title: Perfetto slice table
+table: slice
+summary: Timed trace intervals for tasks, methods, frames, async work, and other duration-based events.
+business_purpose:
+  - Analyze long tasks and UI stalls.
+  - Rank expensive slices by duration.
+  - Join to thread_track, thread, and process for ownership.
+row_grain: one timed slice interval
+important_columns:
+  - id
+  - ts
+  - dur
+  - track_id
+  - name
+  - category
+  - depth
+aliases:
+  - slice
+  - long task
+  - main thread stall
+  - jank slice
+use_cases:
+  - Find slices whose duration is over 16 ms.
+  - Explain which thread/process owns the longest slices.
+join_hints:
+  - slice.track_id = thread_track.id
+tags:
+  - perfetto
+  - trace
+  - duration
+  - jank
+enabled: true

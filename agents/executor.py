@@ -43,14 +43,22 @@ class ExecutorAgent(BaseAgent):
 
     def __init__(
         self,
-        db_tool: DatabaseTool,
+        db_tool: Any,
         memory_manager: MemoryManager,
         monitor: Optional[BaseMonitor] = None,
+        dialect: str = "postgres",
+        tool_label: str = "database",
+        llm_client: Optional[LLMClient] = None,
     ) -> None:
         super().__init__(name="executor")
         self.db_tool = db_tool
+        # Keep db_tool for the existing /chat code, but route all new work
+        # through sql_tool so the same agent can execute against Perfetto.
+        self.sql_tool = db_tool
+        self.dialect = dialect
+        self.tool_label = tool_label
         self.memory_manager = memory_manager
-        self.llm_client = LLMClient(
+        self.llm_client = llm_client or LLMClient(
             LLMEndpointConfig(
                 base_url=EXECUTOR_LLM_CONFIG.base_url,
                 api_key=EXECUTOR_LLM_CONFIG.api_key,
@@ -94,7 +102,7 @@ class ExecutorAgent(BaseAgent):
         )
 
         schema_start = perf_counter()
-        schema_context = self.db_tool.select_schema_context(
+        schema_context = self.sql_tool.select_schema_context(
             user_query=user_query,
             retry_count=retry_count,
         )
@@ -171,7 +179,7 @@ class ExecutorAgent(BaseAgent):
         )
 
         try:
-            query_result = self.db_tool.execute_sql(sql)
+            query_result = self.sql_tool.execute_sql(sql)
             observe_db_query(
                 source=str(query_result.get("source", "unknown")),
                 success=True,
@@ -219,6 +227,20 @@ class ExecutorAgent(BaseAgent):
             fallback_context_size=len(context_records),
         )
         analysis_strategy = str(analysis.get("_analysis_strategy", "fallback"))
+        analysis_debug = dict(analysis.get("_analysis_debug") or {})
+        traces.append(
+            ToolCallTrace(
+                tool_name="summarize_result",
+                arguments=analysis_debug,
+                success=bool(analysis_debug.get("success", analysis_strategy == "llm")),
+                output_preview=(
+                    f"strategy={analysis_strategy}; "
+                    f"fallback_fields={analysis_debug.get('fallback_fields', [])}; "
+                    f"error={analysis_debug.get('llm_error') or ''}"
+                ),
+                duration_ms=0.0,
+            )
+        )
         observe_executor_analysis_strategy(analysis_strategy)
         chart = analysis.get("chart") or self._build_chart(rows)
         chart_type = chart.chart_type if chart is not None else "none"
@@ -301,16 +323,10 @@ class ExecutorAgent(BaseAgent):
             return None
 
         context_preview = [getattr(item, "content", "") for item in context_records[-8:]]
-        system_prompt = (
-            "你是资深数据分析 SQL 生成器。"
-            "只输出 JSON，格式为 {\"sql\":\"SELECT ...\",\"reason\":\"...\"}。"
-            "必须生成单条只读 SQL，必须以 SELECT 开头，不允许注释和多语句。"
-            "优先使用给定的候选表与关系，不要臆造字段。"
-            "如果同时需要窗口函数和聚合函数，必须拆成外层 SELECT + 内层子查询。"
-            "严禁把 window function 直接写进 aggregate function 的参数中。"
-        )
+        system_prompt = self._build_sql_generation_system_prompt()
         user_prompt = (
             f"用户问题: {user_query}\n"
+            f"SQL dialect/tool: {self.dialect} / {self.tool_label}\n"
             f"Schema 策略: {schema_context.strategy}\n"
             f"候选表: {schema_context.selected_tables}\n"
             f"候选关系: {schema_context.selected_relationships}\n"
@@ -362,13 +378,7 @@ class ExecutorAgent(BaseAgent):
         if not self.llm_client.is_enabled():
             return None
 
-        system_prompt = (
-            "你是 PostgreSQL SQL 修复器。"
-            "只输出 JSON，格式为 {\"sql\":\"SELECT ...\",\"reason\":\"...\"}。"
-            "必须保留原始查询意图，但要修复 PostgreSQL 不接受的写法。"
-            "如果问题涉及聚合函数与窗口函数冲突，必须改成外层 SELECT + 内层子查询的两段式写法。"
-            "不允许输出非 SELECT 语句。"
-        )
+        system_prompt = self._build_sql_repair_system_prompt()
         user_prompt = (
             f"用户问题: {user_query}\n"
             f"原始 SQL:\n{original_sql}\n"
@@ -376,7 +386,7 @@ class ExecutorAgent(BaseAgent):
             f"上次执行错误: {last_error or '无'}\n"
             f"候选表: {schema_context.selected_tables}\n"
             f"可用 Schema:\n{schema_context.prompt_text}\n"
-            "请返回一条修复后的 PostgreSQL SELECT SQL。"
+            f"请返回一条修复后的只读 {self.dialect} SQL。"
         )
         try:
             result = self.llm_client.chat_json(
@@ -392,10 +402,49 @@ class ExecutorAgent(BaseAgent):
             return None
         return repaired_sql
 
+    def _build_sql_generation_system_prompt(self) -> str:
+        if self.dialect == "perfetto":
+            return (
+                "你是 Perfetto trace SQL 生成器。"
+                "只输出 JSON，格式为 {\"sql\":\"...\",\"reason\":\"...\"}。"
+                "必须生成只读 Perfetto SQL；最终查询必须是 SELECT 或 WITH。"
+                "默认不要使用 INCLUDE PERFETTO MODULE；只有 schema 或知识库明确给出可用模块名时才允许使用。"
+                "不允许注释、写入语句或多条业务查询。"
+                "Perfetto 的 ts/dur/cpu_time 等时间字段通常是纳秒，展示毫秒时除以 1e6。"
+                "优先使用给定的候选表、字段、知识库提示和关系，不要臆造字段。"
+            )
+        return (
+            "你是资深数据分析 SQL 生成器。"
+            "只输出 JSON，格式为 {\"sql\":\"SELECT ...\",\"reason\":\"...\"}。"
+            "必须生成单条只读 SQL，必须以 SELECT 开头，不允许注释和多语句。"
+            "优先使用给定的候选表与关系，不要臆造字段。"
+            "如果同时需要窗口函数和聚合函数，必须拆成外层 SELECT + 内层子查询。"
+            "严禁把 window function 直接写进 aggregate function 的参数中。"
+        )
+
+    def _build_sql_repair_system_prompt(self) -> str:
+        if self.dialect == "perfetto":
+            return (
+                "你是 Perfetto SQL 修复器。"
+                "只输出 JSON，格式为 {\"sql\":\"...\",\"reason\":\"...\"}。"
+                "必须保留原始查询意图，但要修复 Perfetto trace processor 不接受的写法。"
+                "最终查询必须保持只读，只允许 SELECT/WITH；如果上次错误是 unknown module，必须移除对应 INCLUDE。"
+                "不允许输出 INSERT、UPDATE、DELETE、DROP、CREATE、ALTER 等写入或 DDL 语句。"
+            )
+        return (
+            "你是 PostgreSQL SQL 修复器。"
+            "只输出 JSON，格式为 {\"sql\":\"SELECT ...\",\"reason\":\"...\"}。"
+            "必须保留原始查询意图，但要修复 PostgreSQL 不接受的写法。"
+            "如果问题涉及聚合函数与窗口函数冲突，必须改成外层 SELECT + 内层子查询的两段式写法。"
+            "不允许输出非 SELECT 语句。"
+        )
+
     def _validate_generated_sql(self, sql: str) -> tuple[bool, str]:
         normalized = (sql or "").strip()
         if not normalized:
             return False, "empty_sql"
+        if self.dialect == "perfetto" and hasattr(self.sql_tool, "validate_sql"):
+            return self.sql_tool.validate_sql(normalized)
         if not normalized.upper().startswith("SELECT"):
             return False, "not_select"
         if ";" in normalized.rstrip(";"):
@@ -452,6 +501,22 @@ class ExecutorAgent(BaseAgent):
         retry_count: int,
         last_error: Optional[str],
     ) -> str:
+        if self.dialect == "perfetto":
+            from DataAnalyze.tools.perfetto.perfetto_templates import (
+                build_plan_from_problem,
+                build_sql_from_plan,
+            )
+
+            plan = build_plan_from_problem(
+                problem=user_query,
+                threshold_ms=16.0,
+                limit=20,
+                analysis_mode="fallback",
+                dataset_id="default-output-pb",
+                source_type="trace_processor",
+            )
+            return build_sql_from_plan(plan)
+
         normalized = user_query.strip().lower()
         selected_tables = set(schema_context.selected_tables)
 
@@ -543,6 +608,19 @@ class ExecutorAgent(BaseAgent):
         if not self.llm_client.is_enabled():
             return {
                 "_analysis_strategy": "fallback",
+                "_analysis_debug": {
+                    "success": False,
+                    "strategy": "fallback",
+                    "llm_enabled": False,
+                    "llm_error": "llm_disabled",
+                    "raw_llm_response": None,
+                    "fallback_fields": [
+                        "text_reply",
+                        "professional_findings",
+                        "recommendations",
+                        "chart",
+                    ],
+                },
                 "text_reply": self._build_text_reply(
                     user_query=user_query,
                     row_count=len(rows),
@@ -554,15 +632,7 @@ class ExecutorAgent(BaseAgent):
                 "chart": self._build_chart(rows),
             }
 
-        system_prompt = (
-            "你是企业级日志与数据库分析专家。"
-            "根据 SQL 查询结果生成专业分析。"
-            "仅输出 JSON，格式为 "
-            "{\"text_reply\":\"...\",\"professional_findings\":[\"...\"],"
-            "\"recommendations\":[\"...\"],"
-            "\"chart\":{\"chart_type\":\"line|bar|pie|table\",\"title\":\"...\","
-            "\"x_axis\":[...],\"series\":[{\"name\":\"...\",\"data\":[...]}]}}"
-        )
+        system_prompt = self._build_analysis_system_prompt()
         preview_rows = rows[:80]
         user_prompt = (
             f"问题: {user_query}\n"
@@ -572,29 +642,84 @@ class ExecutorAgent(BaseAgent):
         )
 
         try:
-            result = self.llm_client.chat_json(
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
+            expects_llm_chart = self.dialect != "perfetto"
+            if self.dialect == "perfetto":
+                # Some OpenAI-compatible providers produce malformed top-level
+                # JSON when response_format=json_object is enabled for longer
+                # summaries. For Perfetto summaries, request plain text and
+                # parse the assistant content ourselves; chart stays system-built.
+                raw_response = self.llm_client.chat_text(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    temperature=0.2,
+                    max_tokens=900,
+                )
+                result = self.llm_client._parse_json_text(raw_response)
+            else:
+                result = self.llm_client.chat_json(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                )
+                raw_response = json.dumps(result, ensure_ascii=False, default=str)
+            raw_text_reply = str(result.get("text_reply", "")).strip()
+            raw_findings = result.get("professional_findings")
+            raw_recommendations = result.get("recommendations")
+            raw_chart = result.get("chart")
+            fallback_fields: List[str] = []
+            if not raw_text_reply:
+                fallback_fields.append("text_reply")
+            if not raw_findings:
+                fallback_fields.append("professional_findings")
+            if not raw_recommendations:
+                fallback_fields.append("recommendations")
+            if expects_llm_chart and not isinstance(raw_chart, dict):
+                fallback_fields.append("chart")
+            parsed_chart = (
+                self._safe_chart(raw_chart, rows)
+                if expects_llm_chart
+                else self._build_chart(rows)
             )
-            parsed_chart = self._safe_chart(result.get("chart"), rows)
             return {
                 "_analysis_strategy": "llm",
-                "text_reply": str(result.get("text_reply", "")).strip()
+                "_analysis_debug": {
+                    "success": True,
+                    "strategy": "llm",
+                    "llm_enabled": True,
+                    "llm_error": None,
+                    "raw_llm_response": self._sanitize_debug_text(
+                        raw_response,
+                        max_len=1200,
+                    ),
+                    "fallback_fields": fallback_fields,
+                    "chart_source": "llm_or_inferred" if expects_llm_chart else "system",
+                },
+                "text_reply": raw_text_reply
                 or self._build_text_reply(
                     user_query=user_query,
                     row_count=len(rows),
                     rows=rows,
                     context_size=fallback_context_size,
                 ),
-                "professional_findings": result.get("professional_findings")
-                or self._fallback_findings(rows),
-                "recommendations": result.get("recommendations")
-                or self._fallback_recommendations(rows),
+                "professional_findings": raw_findings or self._fallback_findings(rows),
+                "recommendations": raw_recommendations or self._fallback_recommendations(rows),
                 "chart": parsed_chart,
             }
-        except Exception:
+        except Exception as ex:
             return {
                 "_analysis_strategy": "fallback",
+                "_analysis_debug": {
+                    "success": False,
+                    "strategy": "fallback",
+                    "llm_enabled": True,
+                    "llm_error": str(ex)[:240],
+                    "raw_llm_response": None,
+                    "fallback_fields": [
+                        "text_reply",
+                        "professional_findings",
+                        "recommendations",
+                        "chart",
+                    ],
+                },
                 "text_reply": self._build_text_reply(
                     user_query=user_query,
                     row_count=len(rows),
@@ -605,6 +730,38 @@ class ExecutorAgent(BaseAgent):
                 "recommendations": self._fallback_recommendations(rows),
                 "chart": self._build_chart(rows),
             }
+
+    def _sanitize_debug_text(self, text: str, max_len: int = 800) -> str:
+        content = (text or "").strip()
+        if not content:
+            return ""
+        content = re.sub(r"sk-[A-Za-z0-9_-]{8,}", "sk-***", content)
+        content = re.sub(r"(?i)bearer\s+[A-Za-z0-9._-]{8,}", "Bearer ***", content)
+        content = re.sub(r"[A-Za-z0-9]{24,}\.[A-Za-z0-9._-]{8,}", "***.***", content)
+        if len(content) > max_len:
+            return content[:max_len] + "..."
+        return content
+
+    def _build_analysis_system_prompt(self) -> str:
+        if self.dialect == "perfetto":
+            return (
+                "你是 Android/Perfetto 性能分析专家。"
+                "根据 Perfetto SQL 查询结果生成初步性能结论。"
+                "结论必须说明 SQL 查到了什么指标、是否能支撑用户问题、还需要什么下一步证据。"
+                "仅输出 JSON，格式为 "
+                "{\"text_reply\":\"...\",\"professional_findings\":[\"...\"],"
+                "\"recommendations\":[\"...\"]}"
+                "不要输出 chart 字段；图表配置由系统根据 SQL rows 生成。"
+            )
+        return (
+            "你是企业级日志与数据库分析专家。"
+            "根据 SQL 查询结果生成专业分析。"
+            "仅输出 JSON，格式为 "
+            "{\"text_reply\":\"...\",\"professional_findings\":[\"...\"],"
+            "\"recommendations\":[\"...\"],"
+            "\"chart\":{\"chart_type\":\"line|bar|pie|table\",\"title\":\"...\","
+            "\"x_axis\":[...],\"series\":[{\"name\":\"...\",\"data\":[...]}]}}"
+        )
 
     def _safe_chart(self, raw_chart: Any, rows: List[Dict[str, Any]]) -> Optional[ChartConfig]:
         if not isinstance(raw_chart, dict):
@@ -802,6 +959,13 @@ class ExecutorAgent(BaseAgent):
         rows: List[Dict[str, Any]],
         context_size: int,
     ) -> str:
+        if self.dialect == "perfetto":
+            preview = rows[:2] if rows else []
+            return (
+                f"已完成 Perfetto 查询与初步分析。问题: {user_query}。"
+                f"命中 {row_count} 行 trace 数据，上下文条目 {context_size} 条。"
+                f"预览: {preview}"
+            )
         preview = rows[:2] if rows else []
         return (
             f"已完成查询与分析。问题: {user_query}。"

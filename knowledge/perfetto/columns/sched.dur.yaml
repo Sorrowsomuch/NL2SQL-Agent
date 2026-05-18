@@ -1,0 +1,14 @@
+id: perfetto.column.sched.dur
+kind: column_semantics
+title: Perfetto sched CPU duration
+table: sched
+column: dur
+summary: Scheduled CPU duration in nanoseconds. Sum dur / 1e6 to calculate CPU time in milliseconds.
+retrieval_keywords:
+  - cpu time
+  - sched
+  - scheduled duration
+tags:
+  - perfetto
+  - cpu
+enabled: true

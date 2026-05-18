@@ -61,14 +61,10 @@ class ReviewerLLMConfig:
 
 @dataclass(frozen=True)
 class PerfettoLLMConfig:
-    """LLM config reserved for the Perfetto double-agent chain.
-
-    It is intentionally independent from executor/reviewer config so enabling
-    Perfetto SQL generation later will not change the existing /chat behavior.
-    """
+    """Perfetto LLM config reusing the existing executor/common API key."""
 
     enabled: bool = True
-    base_url: str = "https://api.deepseek.com/v1"      
+    base_url: str = "https://api.deepseek.com/v1"
     api_key: str = field(
         default_factory=lambda: os.getenv(
             "DATAANALYZE_EXECUTOR_LLM_API_KEY",
@@ -76,8 +72,6 @@ class PerfettoLLMConfig:
         )
     )
     model: str = "deepseek-chat"
-        
-    
     timeout_sec: int = 60
 
 

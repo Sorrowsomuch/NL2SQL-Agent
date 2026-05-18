@@ -1,0 +1,24 @@
+id: perfetto.table.thread
+kind: table_profile
+title: Perfetto thread table
+table: thread
+summary: Thread metadata, including OS tid, Perfetto utid, owning process upid, and thread name.
+row_grain: one thread
+important_columns:
+  - utid
+  - tid
+  - upid
+  - name
+aliases:
+  - thread
+  - main thread
+  - RenderThread
+join_hints:
+  - thread.utid = thread_track.utid
+  - thread.utid = sched.utid
+  - thread.upid = process.upid
+tags:
+  - perfetto
+  - trace
+  - thread
+enabled: true

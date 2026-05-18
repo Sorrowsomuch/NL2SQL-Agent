@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Dict
+from typing import Any, Callable, Dict, Optional
 
 from DataAnalyze.agents.base import BaseAgent
 from DataAnalyze.config import REVIEWER_LLM_CONFIG
@@ -13,8 +13,19 @@ from DataAnalyze.tools.llm_tool import LLMClient, LLMEndpointConfig
 class ReviewerAgent(BaseAgent):
     """Reviewer：审核 Executor 结果并给出重试建议。"""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        sql_validator: Optional[Callable[[str], tuple[bool, str]]] = None,
+        require_chart_for_analysis: bool = True,
+        domain_label: str = "database",
+    ) -> None:
         super().__init__(name="reviewer")
+        # Optional policy hook lets the original reviewer audit Perfetto SQL
+        # with the same flow while keeping PostgreSQL behavior unchanged.
+        self.sql_validator = sql_validator
+        self.require_chart_for_analysis = require_chart_for_analysis
+        self.domain_label = domain_label
+        self.use_llm_review = REVIEWER_LLM_CONFIG.enabled
         # 当前默认开启 LLM 复核，同时保留规则评审作为硬约束。
         self.use_llm_review = REVIEWER_LLM_CONFIG.enabled
         self._last_llm_error: str = ""
@@ -88,7 +99,15 @@ class ReviewerAgent(BaseAgent):
             reason = response.error_reason or "Executor 执行失败"
             return ReviewDecision(approved=False, reason=reason, should_retry=True)
 
-        if not response.sql or not response.sql.strip().upper().startswith("SELECT"):
+        if self.sql_validator is not None:
+            is_valid, reason = self.sql_validator(response.sql or "")
+            if not is_valid:
+                return ReviewDecision(
+                    approved=False,
+                    reason=f"SQL 不符合 {self.domain_label} 只读策略: {reason}",
+                    should_retry=True,
+                )
+        elif not response.sql or not response.sql.strip().upper().startswith("SELECT"):
             return ReviewDecision(
                 approved=False,
                 reason="SQL 不符合安全策略（必须以 SELECT 开头）",
@@ -110,7 +129,8 @@ class ReviewerAgent(BaseAgent):
             )
 
         if (
-            self._is_analysis_query(normalized_query)
+            self.require_chart_for_analysis
+            and self._is_analysis_query(normalized_query)
             and not response.chart
             and self._result_is_chartable(response)
         ):
@@ -198,6 +218,14 @@ class ReviewerAgent(BaseAgent):
             "tool_calls非空、rows在1到500之间；分析类请求只有在结果明显适合图表时才要求chart。"
             "固定格式: approved=true|false;should_retry=true|false;reason=中文原因(<=40字)。"
         )
+
+        if self.sql_validator is not None:
+            system_prompt = (
+                f"你是严格审核器，只输出一行。根据 {self.domain_label} 只读 SQL 策略审核结果。"
+                "硬约束: success=true、SQL 已通过工具侧只读校验、text_reply 非空、tool_calls 非空、"
+                "rows 在 0 到 500 之间；还要判断 SQL 与用户 query 意图是否一致。"
+                "固定格式: approved=true|false;should_retry=true|false;reason=中文原因(<=40字)。"
+            )
 
         payload = {
             "query": user_query,

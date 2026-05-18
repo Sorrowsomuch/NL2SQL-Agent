@@ -1,0 +1,18 @@
+id: perfetto.table.thread_track
+kind: table_profile
+title: Perfetto thread_track table
+table: thread_track
+summary: Maps slice tracks to Perfetto thread identifiers.
+row_grain: one thread-owned track
+important_columns:
+  - id
+  - utid
+  - name
+join_hints:
+  - thread_track.id = slice.track_id
+  - thread_track.utid = thread.utid
+tags:
+  - perfetto
+  - trace
+  - join
+enabled: true

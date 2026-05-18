@@ -51,8 +51,8 @@ class PerfettoExecutorAgent:
     ) -> PerfettoAgentResponse:
         if not self.is_enabled():
             raise RuntimeError(
-                "Perfetto LLM is not enabled; set DATAANALYZE_PERFETTO_LLM_ENABLED=true "
-                "and DATAANALYZE_PERFETTO_LLM_API_KEY"
+                "Perfetto LLM is not enabled; set DATAANALYZE_EXECUTOR_LLM_API_KEY "
+                "or DATAANALYZE_LLM_API_KEY"
             )
 
         tool_calls: List[Dict[str, Any]] = []
@@ -130,9 +130,32 @@ class PerfettoExecutorAgent:
                 "arguments": {
                     "strategy": schema_context.strategy,
                     "metadata_source": schema_context.metadata_source,
+                    "fetch_mode": schema_context.fetch_mode,
+                    "discovery_tables": schema_context.discovery_tables,
+                    "query_planner_strategy": schema_context.query_planner_strategy,
+                    "query_planner_reason": schema_context.query_planner_reason,
+                    "query_planner_query_type": schema_context.query_planner_query_type,
+                    "query_planner_primary_metric": schema_context.query_planner_primary_metric,
+                    "query_planner_time_requirement": schema_context.query_planner_time_requirement,
+                    "query_planner_analysis_dimensions": schema_context.query_planner_analysis_dimensions,
+                    "query_planner_filter_dimensions": schema_context.query_planner_filter_dimensions,
+                    "query_planner_candidate_tables_hard": schema_context.query_planner_candidate_tables_hard,
+                    "query_planner_candidate_tables_soft": schema_context.query_planner_candidate_tables_soft,
+                    "query_planner_join_needed": schema_context.query_planner_join_needed,
+                    "column_selection_strategy": schema_context.column_selection_strategy,
+                    "column_planner_strategy": schema_context.column_planner_strategy,
+                    "column_planner_reason": schema_context.column_planner_reason,
+                    "planner_required_columns_by_table": schema_context.planner_required_columns_by_table,
+                    "planner_optional_columns_by_table": schema_context.planner_optional_columns_by_table,
                     "selected_tables": schema_context.selected_tables,
+                    "selected_relationships": schema_context.selected_relationships,
                     "selected_columns_by_table": schema_context.selected_columns_by_table,
                     "prompt_budget_chars": schema_context.prompt_budget_chars,
+                    "knowledge_strategy": schema_context.knowledge_strategy,
+                    "knowledge_hit_ids": schema_context.knowledge_hit_ids,
+                    "knowledge_hit_titles": schema_context.knowledge_hit_titles,
+                    "knowledge_column_hints": schema_context.knowledge_column_hints,
+                    "retrieval_notes": schema_context.retrieval_notes,
                 },
                 "success": True,
                 "output_preview": schema_context.prompt_text,

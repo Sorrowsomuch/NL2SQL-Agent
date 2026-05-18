@@ -23,33 +23,26 @@ http://127.0.0.1:8100/perfetto/debug
 
 ### Perfetto LLM 配置
 
-Perfetto LLM 使用独立配置，不影响 `/chat` 的 executor/reviewer：
+Perfetto LLM 直接复用 executor/common API key，不需要单独配置：
 
 ```powershell
-$env:DATAANALYZE_PERFETTO_LLM_ENABLED="true"
-$env:DATAANALYZE_PERFETTO_LLM_BASE_URL="https://api.deepseek.com/v1"
-$env:DATAANALYZE_PERFETTO_LLM_API_KEY="your-key"
-$env:DATAANALYZE_PERFETTO_LLM_MODEL="deepseek-chat"
-$env:DATAANALYZE_PERFETTO_LLM_TIMEOUT_SEC="60"
+$env:DATAANALYZE_LLM_API_KEY="your-key"
 ```
 
 如果使用 Ollama 的 OpenAI-compatible 接口：
 
 ```powershell
-$env:DATAANALYZE_PERFETTO_LLM_ENABLED="true"
-$env:DATAANALYZE_PERFETTO_LLM_BASE_URL="http://127.0.0.1:11434/v1"
-$env:DATAANALYZE_PERFETTO_LLM_API_KEY="ollama"
-$env:DATAANALYZE_PERFETTO_LLM_MODEL="qwen2.5:7b"
+$env:DATAANALYZE_EXECUTOR_LLM_API_KEY="your-key"
 ```
 
-配置后需要重启 uvicorn。未配置 key 或未设置 `DATAANALYZE_PERFETTO_LLM_ENABLED=true` 时，`analysis_mode=llm` 会返回可读错误。
+配置后需要重启 uvicorn。未配置 `DATAANALYZE_EXECUTOR_LLM_API_KEY` 或 `DATAANALYZE_LLM_API_KEY` 时，`analysis_mode=llm` 会返回可读错误。
 
 ### 调试页面怎么看
 
 `/perfetto/debug` 的 `analysis_mode`：
 
 - `template`：走当前模板链路，不调用 LLM。
-- `llm`：强制走 `PerfettoExecutorAgent`，由 LLM 生成 Perfetto SQL，再执行和汇总。
+- `llm`：强制走原 `ExecutorAgent + PerfettoTool + ReviewerAgent`，由 LLM 生成 Perfetto SQL，再执行和汇总。
 - `auto`：当前仍走模板链路，后续 Step 3 会改成 LLM 优先、失败 fallback 到模板。
 
 响应页签：
@@ -71,6 +64,43 @@ LLM 正常工作时，`Tool Calls` 里应至少看到：
   - `arguments.rows_sample`：发给 LLM 的查询结果样本。
   - `arguments.llm_response`：LLM 返回的指标、证据、结论、建议。
   - `arguments.normalized_summary`：系统规范化后的最终输出。
+
+### Perfetto schema / knowledge 当前边界
+
+Perfetto 当前不是另起一套知识库系统，而是复用现有 `DataAnalyze/knowledge` 和 `KnowledgeRetriever`。新增的 Perfetto 知识位于：
+
+```text
+DataAnalyze/knowledge/perfetto/tables/
+DataAnalyze/knowledge/perfetto/columns/
+DataAnalyze/knowledge/perfetto/patterns/
+DataAnalyze/knowledge/perfetto/metrics/
+```
+
+当前默认认为 trace processor 暴露的核心表结构相对固定，先以内置 schema + 知识库方式描述：
+
+- `slice`
+- `thread_track`
+- `thread`
+- `process`
+- `sched`
+- `counter`
+- `counter_track`
+- `actual_frame_timeline_slice`
+- `expected_frame_timeline_slice`
+
+`PerfettoTool.select_schema_context()` 会复用 DB 链路的结构化输出思想，返回 `SchemaSelectionResult`，其中包含：
+
+- `query_planner_strategy`
+- `query_planner_primary_metric`
+- `query_planner_candidate_tables_hard`
+- `query_planner_candidate_tables_soft`
+- `selected_columns_by_table`
+- `knowledge_strategy`
+- `knowledge_hit_ids`
+- `knowledge_column_hints`
+- `knowledge_prompt_text`
+
+这一步仍然不把 `output.pb` 入库；后续如果做 `output.pb -> database`，可以保留这些知识条目，再补数据库侧的数据源实现。
 
 ### 最小请求示例
 
@@ -299,24 +329,80 @@ curl -X POST http://127.0.0.1:8100/chat ^
 
 ## 2026-05-15 Perfetto LLM Config
 
-Perfetto 双 Agent 链路预留了独立 LLM 配置，不会复用或改动 `/chat` 的 executor/reviewer key。后续 `PerfettoExecutorAgent` 会复用 `DataAnalyze/tools/llm_tool.py` 的 `LLMClient`。
+Perfetto 双 Agent 链路现在直接复用原 executor/reviewer LLM 配置；`/chat` 的行为不变，Perfetto 只是给原 `ExecutorAgent` 换成 `PerfettoTool`。
 
 ```powershell
-$env:DATAANALYZE_PERFETTO_LLM_ENABLED="true"
-$env:DATAANALYZE_PERFETTO_LLM_BASE_URL="https://api.deepseek.com/v1"
-$env:DATAANALYZE_PERFETTO_LLM_API_KEY="your-key"
-$env:DATAANALYZE_PERFETTO_LLM_MODEL="deepseek-chat"
-$env:DATAANALYZE_PERFETTO_LLM_TIMEOUT_SEC="60"
+$env:DATAANALYZE_LLM_API_KEY="your-key"
 ```
 
 如果使用 Ollama 的 OpenAI-compatible 接口，可以改成：
 
 ```powershell
-$env:DATAANALYZE_PERFETTO_LLM_BASE_URL="http://127.0.0.1:11434/v1"
-$env:DATAANALYZE_PERFETTO_LLM_API_KEY="ollama"
-$env:DATAANALYZE_PERFETTO_LLM_MODEL="qwen2.5:7b"
+$env:DATAANALYZE_EXECUTOR_LLM_API_KEY="your-key"
 ```
 
-默认 `DATAANALYZE_PERFETTO_LLM_ENABLED=false`，且未配置 `DATAANALYZE_PERFETTO_LLM_API_KEY` 时不会启用 Perfetto LLM。
+默认复用 `DATAANALYZE_EXECUTOR_LLM_API_KEY`，未设置时回退 `DATAANALYZE_LLM_API_KEY`。
 
-`GET /perfetto/debug` 的 `analysis_mode` 已支持 `llm`。选择 `llm` 时，`POST /perfetto/agent` 会走 `PerfettoExecutorAgent`：先让 LLM 生成 Perfetto SQL，再经 `PerfettoTool.validate_sql()` 和 trace processor 执行，最后由 LLM 汇总指标、证据和结论。未配置 Perfetto LLM 时会返回可读错误；`template` 模式仍保持原模板链路。
+`GET /perfetto/debug` 的 `analysis_mode` 已支持 `llm`。选择 `llm` 时，`POST /perfetto/agent` 会走原 `ExecutorAgent`：先让 LLM 生成 Perfetto SQL，再经 `PerfettoTool.validate_sql()` 和 trace processor 执行，最后由 executor 汇总指标、证据和结论，并交给原 `ReviewerAgent` 审核。未配置 LLM 时会返回可读错误；`template` 模式仍保持原模板链路。
+## 当前 LLM API 复用规则
+
+Perfetto 不再要求单独配置 `DATAANALYZE_PERFETTO_LLM_*`。它直接复用原 executor 的 API 配置，优先级和原 DB Agent 一致：
+
+```text
+DATAANALYZE_EXECUTOR_LLM_API_KEY
+ -> fallback DATAANALYZE_LLM_API_KEY
+```
+
+也就是说，如果原来的 DB Agent 已经能调用 LLM，`analysis_mode=llm` 的 Perfetto Agent 也会使用同一套 API。
+
+最小配置：
+
+```powershell
+$env:DATAANALYZE_LLM_API_KEY="your-key"
+```
+
+或只覆盖 executor/Perfetto 侧：
+
+```powershell
+$env:DATAANALYZE_EXECUTOR_LLM_API_KEY="your-key"
+```
+
+配置后重启 uvicorn。旧的 `DATAANALYZE_PERFETTO_LLM_ENABLED / API_KEY / BASE_URL / MODEL / TIMEOUT_SEC` 不再是必需配置。
+## 2026-05-15 Perfetto 双 Agent 当前接线
+
+Perfetto 现在不是另一套独立 Agent 系统。`analysis_mode=llm` 已直接复用原来的双 Agent：
+
+```text
+POST /perfetto/agent
+ -> PerfettoAgent 前端适配层
+ -> WorkflowEngine retry 闭环
+ -> ExecutorAgent(dialect="perfetto", sql_tool=PerfettoTool)
+ -> PerfettoTool.select_schema_context / execute_sql / validate_sql
+ -> ReviewerAgent(sql_validator=PerfettoTool.validate_sql)
+ -> PerfettoAgentResponse
+```
+
+这意味着：
+
+- LLM API 复用原 executor 配置：优先 `DATAANALYZE_EXECUTOR_LLM_API_KEY`，未设置时回退 `DATAANALYZE_LLM_API_KEY`。
+- 不需要 `DATAANALYZE_PERFETTO_LLM_*`。
+- `/chat` 不变，仍然是 `ExecutorAgent + DatabaseTool + ReviewerAgent`。
+- Perfetto reviewer 不再要求 SQL 以 `SELECT` 开头，而是使用 `PerfettoTool.validate_sql()` 判断是否只读，所以 `WITH ... SELECT ...` 和 `INCLUDE PERFETTO MODULE ...; SELECT ...` 可以通过。
+- Perfetto LLM 模式已接入 `WorkflowEngine`，执行失败或 review 失败会带着错误原因进入下一轮重试。
+- Perfetto schema 阶段已对齐 DBTool：`PerfettoTool` 会复用 `KnowledgeRetriever`、query planner LLM、column planner LLM、sanitize/merge/final column priority 这些步骤；LLM 不可用时 fallback 到规则 planner。
+- Perfetto 结果汇总阶段不使用 `response_format=json_object`，而是 text 模式读取 assistant 内容后解析 JSON，规避部分 OpenAI-compatible provider 返回坏顶层 JSON 的问题；图表仍由系统根据 rows 生成。
+- `PerfettoExecutorAgent` 仅保留为历史实验代码，主链路不再实例化它。
+
+调试入口：
+
+- 前端页面：`http://127.0.0.1:8100/perfetto/debug`
+- Agent 接口：`POST http://127.0.0.1:8100/perfetto/agent`
+- 固定 SQL：`POST http://127.0.0.1:8100/perfetto/query`
+
+最小 LLM 请求：
+
+```powershell
+curl.exe -X POST http://127.0.0.1:8100/perfetto/agent `
+  -H "Content-Type: application/json" `
+  -d "{\"session_id\":\"s1\",\"problem\":\"分析主线程卡顿\",\"analysis_mode\":\"llm\",\"limit\":20}"
+```

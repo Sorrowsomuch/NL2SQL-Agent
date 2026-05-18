@@ -66,7 +66,7 @@ Perfetto/output.pb 接入后，数据源从 PostgreSQL 变成 trace processor + 
 
 ## 任务拆分
 
-### Step 1：新增 Perfetto LLM 配置
+### Step 1：复用现有 LLM 配置
 
 目标：给 Perfetto 链路单独配置 LLM，但仍复用 `LLMClient`。
 
@@ -75,19 +75,16 @@ Perfetto/output.pb 接入后，数据源从 PostgreSQL 变成 trace processor + 
 建议新增配置：
 
 ```text
-DATAANALYZE_PERFETTO_LLM_ENABLED=true
-DATAANALYZE_PERFETTO_LLM_BASE_URL=https://api.deepseek.com/v1
-DATAANALYZE_PERFETTO_LLM_API_KEY=...
-DATAANALYZE_PERFETTO_LLM_MODEL=deepseek-chat
-DATAANALYZE_PERFETTO_LLM_TIMEOUT_SEC=60
+DATAANALYZE_EXECUTOR_LLM_API_KEY
+ -> fallback DATAANALYZE_LLM_API_KEY
 ```
 
 验收：
 
-- 已新增 `PERFETTO_LLM_CONFIG`。
-- 不配置 key 时，Perfetto LLM 自动视为未启用。
-- 已配置时，后续 `PerfettoExecutorAgent` 可以通过同一个 `LLMClient` 调用模型。
-- 不影响 `/chat` 现有 executor/reviewer 的 LLM 配置。
+- 已保留 `PERFETTO_LLM_CONFIG` 作为内部配置对象，但它复用 executor/common API key。
+- 不配置 executor/common key 时，Perfetto LLM 自动视为未启用。
+- 已配置原有 DB Agent LLM key 时，`PerfettoExecutorAgent` 可以通过同一个 `LLMClient` 调用模型。
+- 不再要求 `DATAANALYZE_PERFETTO_LLM_*` 独立环境变量。
 
 实现文件：
 
@@ -107,6 +104,45 @@ DATAANALYZE_PERFETTO_LLM_TIMEOUT_SEC=60
 - `summarize_perfetto_result.arguments.normalized_summary`：系统规范化后的最终指标、证据、结论和建议。
 
 前端 `GET /perfetto/debug` 已增加 `Tool Calls` 页签，可直接查看上述内容。
+
+### Step 2.5：对齐 DBTool 的 schema/knowledge/planner 输出
+
+状态：已完成第一版。
+
+本步骤的目标是避免 Perfetto 变成另一个孤立系统，而是复用已有知识库检索和 planner/debug 结构。
+
+已完成：
+
+- 新增 `DataAnalyze/knowledge/perfetto/` 知识包。
+- Perfetto 核心表先按固定 trace processor 表描述：
+  - `slice`
+  - `thread_track`
+  - `thread`
+  - `process`
+  - `sched`
+  - `counter`
+  - `counter_track`
+  - `actual_frame_timeline_slice`
+  - `expected_frame_timeline_slice`
+- `PerfettoTool` 已复用 `KnowledgeRetriever`。
+- `PerfettoTool.select_schema_context()` 已返回 DB 风格 `SchemaSelectionResult` debug 字段：
+  - `fetch_mode`
+  - `discovery_tables`
+  - `query_planner_strategy`
+  - `query_planner_primary_metric`
+  - `query_planner_candidate_tables_hard`
+  - `query_planner_candidate_tables_soft`
+  - `column_selection_strategy`
+  - `selected_columns_by_table`
+  - `knowledge_strategy`
+  - `knowledge_hit_ids`
+  - `knowledge_column_hints`
+- `PerfettoExecutorAgent` 的 `select_perfetto_schema_context` tool call 已输出上述字段，方便前端调试。
+
+说明：
+
+- 当前 Perfetto query planner 是规则 planner，但复用了 DB 侧 `sanitize_query_plan_output / merge_query_planner_tables / build_query_plan_summary` 等 helper。
+- 当前不做真实 `output.pb` 入库，也不新增独立知识检索系统。
 
 新增文件：
 
@@ -313,3 +349,26 @@ LLM SQL -> execute -> analyze -> review fail
 - 接入更多 Perfetto 分析场景。
 - 为后续 `output.pb -> database` 抽取后的查询切换保留数据源策略。
 - 多 trace 对比/历史趋势时可以走 `DatabasePerfettoSource`。
+## 2026-05-15 调整：改为直接复用原双 Agent
+
+最新方向已经收敛为：不要把 Perfetto 做成另一套长期并行系统，而是让原有 `ExecutorAgent / ReviewerAgent` 面向不同 SQL 工具运行。
+
+当前落地状态：
+
+- `/chat` 仍然是 `ExecutorAgent + DatabaseTool + ReviewerAgent`。
+- `/perfetto/agent` 的 `analysis_mode=llm` 已改为 `ExecutorAgent + PerfettoTool + ReviewerAgent`。
+- `ExecutorAgent` 新增 `dialect/tool_label` 参数，默认仍是 PostgreSQL 行为；当 `dialect="perfetto"` 时：
+  - schema 选择调用 `PerfettoTool.select_schema_context()`。
+  - SQL 执行调用 `PerfettoTool.execute_sql()`。
+  - SQL guard 调用 `PerfettoTool.validate_sql()`，允许只读 `SELECT/WITH`，也允许只读查询前的 `INCLUDE PERFETTO MODULE ...`。
+  - prompt 会明确 Perfetto 时间单位通常是 ns，展示 ms 时需要除以 `1e6`。
+- `ReviewerAgent` 新增可选 `sql_validator`，Perfetto 链路传入 `PerfettoTool.validate_sql`，所以 reviewer 不再写死“SQL 必须 SELECT 开头”，而是检查“工具侧只读策略是否通过”。
+- `PerfettoAgent` 保留为前端响应适配层：把原 `AgentResponse` 转成 `PerfettoAgentResponse`，稳定输出 `dataset_id/source_type/plan/metrics/evidence/conclusion/tool_calls/review`。
+- `PerfettoExecutorAgent` 目前只作为历史实验实现保留，主接线不再使用它。
+
+后续任务优先级：
+
+1. 把 `analysis_mode=auto` 调整为优先走原 `ExecutorAgent + PerfettoTool`，失败后 fallback 到模板链路。
+2. 让 Perfetto 链路也进入类似 `WorkflowEngine` 的 retry 闭环，而不是只跑单轮。
+3. 继续补 Perfetto 知识库，让原 schema/knowledge/planner 调试字段更接近 DB 链路。
+4. 后续 `output.pb -> database` 入库时，仅新增/切换数据源工具，不重写 agent 流程。

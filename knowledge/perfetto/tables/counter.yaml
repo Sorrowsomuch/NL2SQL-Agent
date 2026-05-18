@@ -1,0 +1,17 @@
+id: perfetto.table.counter
+kind: table_profile
+title: Perfetto counter table
+table: counter
+summary: Time-series counter samples, useful for memory, power, and custom numeric trace counters.
+row_grain: one counter sample
+important_columns:
+  - ts
+  - track_id
+  - value
+join_hints:
+  - counter.track_id = counter_track.id
+tags:
+  - perfetto
+  - trace
+  - counter
+enabled: true

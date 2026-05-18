@@ -6,15 +6,31 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any, Dict, Iterable, List, Optional
 
+from DataAnalyze.config import EXECUTOR_LLM_CONFIG
+from DataAnalyze.middleware.metrics import observe_column_planner, observe_query_planner
 from DataAnalyze.schemas.models import (
     DatabaseSchemaMetadata,
     PerfettoAnalyzeResponse,
     PerfettoMetric,
     SQLExecutionResult,
     SchemaColumn,
+    SchemaRelationship,
     SchemaSelectionResult,
     TableSchema,
 )
+from DataAnalyze.tools.db.field_planner import (
+    build_final_column_priorities,
+    build_planner_prompt_context,
+    sanitize_planner_output,
+)
+from DataAnalyze.tools.db.knowledge_retrieval import KnowledgeRetriever, KnowledgeRetrievalResult
+from DataAnalyze.tools.db.query_planner import (
+    build_query_plan_summary,
+    build_query_planner_prompt_context,
+    merge_query_planner_tables,
+    sanitize_query_plan_output,
+)
+from DataAnalyze.tools.llm_tool import LLMClient, LLMEndpointConfig
 from DataAnalyze.tools.perfetto.perfetto_templates import (
     build_plan_from_problem,
     build_sql_from_plan,
@@ -46,6 +62,23 @@ class PerfettoTool:
         self.trace_processor_path = (
             Path(configured_shell_path).expanduser() if configured_shell_path.strip() else None
         )
+        self.knowledge_retriever = KnowledgeRetriever()
+        self.query_planner_client = LLMClient(
+            LLMEndpointConfig(
+                base_url=EXECUTOR_LLM_CONFIG.base_url,
+                api_key=EXECUTOR_LLM_CONFIG.api_key,
+                model=EXECUTOR_LLM_CONFIG.model,
+                timeout_sec=EXECUTOR_LLM_CONFIG.timeout_sec,
+            )
+        )
+        self.column_planner_client = LLMClient(
+            LLMEndpointConfig(
+                base_url=EXECUTOR_LLM_CONFIG.base_url,
+                api_key=EXECUTOR_LLM_CONFIG.api_key,
+                model=EXECUTOR_LLM_CONFIG.model,
+                timeout_sec=EXECUTOR_LLM_CONFIG.timeout_sec,
+            )
+        )
         self._processor: Optional[Any] = None
 
     def get_schema(self) -> str:
@@ -56,7 +89,7 @@ class PerfettoTool:
             source="perfetto",
             schema_name="perfetto",
             tables=self._builtin_perfetto_tables(),
-            relationships=[],
+            relationships=self._builtin_perfetto_relationships(),
             notes=[
                 f"Perfetto trace path: {self.trace_path}",
                 "Timestamps and durations are nanoseconds; divide by 1e6 for milliseconds.",
@@ -71,49 +104,226 @@ class PerfettoTool:
         max_tables: Optional[int] = None,
         max_columns_per_table: Optional[int] = None,
     ) -> SchemaSelectionResult:
-        metadata = self.get_schema_metadata()
-        selected_tables = self._select_tables_for_query(user_query, max_tables=max_tables)
+        strategy = "perfetto-expanded" if retry_count > 0 else "perfetto-focused"
+        table_limit = max_tables or (8 if retry_count > 0 else 5)
+        column_limit = max_columns_per_table or (12 if retry_count > 0 else 8)
+        inventory = self.get_schema_metadata()
+        fetch_mode = "builtin-two-stage"
+        inventory_tables = [table.name for table in inventory.tables]
+
+        knowledge_result = self.knowledge_retriever.retrieve(
+            query=user_query,
+            allowed_tables=inventory_tables,
+        )
+        query_planner_knowledge_result = self.knowledge_retriever.retrieve(
+            query=user_query,
+            allowed_tables=inventory_tables,
+            kinds=["table_profile", "query_pattern", "metric_definition"],
+        )
+        ranked_tables = self._rank_tables_for_query(
+            user_query=user_query,
+            metadata=inventory,
+            knowledge_result=knowledge_result,
+        )
+        (
+            query_planner_strategy,
+            query_planner_reason,
+            query_plan,
+            query_planner_notes,
+        ) = self._plan_query_with_llm(
+            user_query=user_query,
+            inventory=inventory,
+            ranked_tables=ranked_tables,
+            knowledge_hits=query_planner_knowledge_result.hits,
+        )
+        selected_tables = merge_query_planner_tables(
+            ranked_tables=ranked_tables,
+            hard_tables=query_plan["candidate_tables_hard"],
+            soft_tables=query_plan["candidate_tables_soft"],
+            limit=table_limit,
+        )
+        if not selected_tables:
+            selected_tables = inventory_tables[:table_limit]
+
+        column_knowledge_result = self.knowledge_retriever.retrieve(
+            query=user_query,
+            allowed_tables=selected_tables,
+            kinds=["column_semantics"],
+        )
+        column_hits = self.knowledge_retriever.collect_column_hints(
+            retrieval=column_knowledge_result,
+            selected_tables=selected_tables,
+            max_hits=6 if retry_count > 0 else 4,
+        )
+        planning_knowledge_result = self.knowledge_retriever.retrieve(
+            query=user_query,
+            allowed_tables=selected_tables,
+            kinds=["column_semantics", "query_pattern", "metric_definition"],
+        )
+        query_plan_summary = build_query_plan_summary(query_plan)
+        base_column_priorities = self._build_column_priorities(
+            metadata=inventory,
+            selected_tables=selected_tables,
+            column_hits=column_hits,
+            query_plan=query_plan,
+        )
+        (
+            column_planner_strategy,
+            column_planner_reason,
+            planner_required_columns_by_table,
+            planner_optional_columns_by_table,
+            planner_notes,
+        ) = self._plan_columns_with_llm(
+            user_query=user_query,
+            metadata=inventory,
+            selected_tables=selected_tables,
+            column_hits=column_hits,
+            planning_hits=planning_knowledge_result.hits,
+            query_plan_summary=query_plan_summary,
+        )
+        if planner_required_columns_by_table or planner_optional_columns_by_table:
+            column_priorities = build_final_column_priorities(
+                metadata=inventory,
+                selected_tables=selected_tables,
+                base_priorities=base_column_priorities,
+                planner_required=planner_required_columns_by_table,
+                planner_optional=planner_optional_columns_by_table,
+            )
+            column_selection_strategy = "llm-planner"
+        else:
+            column_priorities = base_column_priorities
+            column_selection_strategy = (
+                "knowledge-aware" if any(column_priorities.values()) else "perfetto-priority"
+            )
+        selected_schema = self._slice_schema_metadata(
+            metadata=inventory,
+            selected_tables=selected_tables,
+            max_columns_per_table=column_limit,
+            prioritized_columns_by_table=column_priorities,
+        )
+        knowledge_prompt = self.knowledge_retriever.build_prompt_context(
+            retrieval=knowledge_result,
+            selected_tables=[table.name for table in selected_schema.tables],
+            max_hits=4 if retry_count > 0 else 3,
+        )
+        column_knowledge_prompt = self.knowledge_retriever.build_prompt_context(
+            retrieval=column_knowledge_result,
+            selected_tables=[table.name for table in selected_schema.tables],
+            max_hits=6 if retry_count > 0 else 4,
+        )
         selected_schema = DatabaseSchemaMetadata(
             source="perfetto",
             schema_name="perfetto",
-            tables=[table for table in metadata.tables if table.name in selected_tables],
-            relationships=[],
-            notes=list(metadata.notes),
+            tables=selected_schema.tables,
+            relationships=selected_schema.relationships,
+            notes=list(selected_schema.notes),
         )
         prompt_text = self.render_schema_prompt(
             selected_schema,
-            max_tables=max_tables,
-            max_columns_per_table=max_columns_per_table,
+            max_tables=table_limit,
+            max_columns_per_table=column_limit,
+        )
+        if knowledge_prompt:
+            prompt_text += "\n\n" + knowledge_prompt
+        if column_knowledge_prompt:
+            prompt_text += "\n\n" + column_knowledge_prompt
+        selected_columns_by_table = {
+            table.name: [column.name for column in table.columns]
+            for table in selected_schema.tables
+        }
+        relationship_summaries = [
+            f"{item.from_table}({', '.join(item.from_columns)}) -> "
+            f"{item.to_table}({', '.join(item.to_columns)})"
+            for item in selected_schema.relationships
+        ]
+        knowledge_column_hints = [
+            f"{hit.table_name}.{hit.column_name}"
+            for hit in column_hits
+            if hit.table_name and hit.column_name
+        ]
+        retrieval_notes = list(selected_schema.notes)
+        retrieval_notes.extend(knowledge_result.notes)
+        retrieval_notes.extend(query_planner_knowledge_result.notes)
+        retrieval_notes.extend(column_knowledge_result.notes)
+        retrieval_notes.extend(planning_knowledge_result.notes)
+        retrieval_notes.extend(query_planner_notes)
+        retrieval_notes.extend(planner_notes)
+        retrieval_notes.append(
+            f"Query planner strategy: {query_planner_strategy}; reason={query_planner_reason}."
+        )
+        retrieval_notes.append(
+            f"Column planner strategy: {column_planner_strategy}; reason={column_planner_reason}."
+        )
+        retrieval_notes.append(
+            f"Column selection strategy: {column_selection_strategy}; column hints={len(knowledge_column_hints)}."
+        )
+        retrieval_notes.append(f"Query plan summary: {query_plan_summary or 'none'}.")
+        retrieval_notes.append(
+            f"Selected {len(selected_schema.tables)} Perfetto table(s), "
+            f"{sum(len(table.columns) for table in selected_schema.tables)} column(s)."
+        )
+        query_planner_table_count = len(query_plan["candidate_tables_hard"]) + len(
+            query_plan["candidate_tables_soft"]
+        )
+        query_planner_dimension_count = len(query_plan["analysis_dimensions"]) + len(
+            query_plan["filter_dimensions"]
+        )
+        observe_query_planner(
+            strategy=query_planner_strategy,
+            outcome=(
+                "success"
+                if query_planner_table_count > 0
+                else ("disabled" if query_planner_strategy == "disabled" else "fallback")
+            ),
+            candidate_table_count=query_planner_table_count,
+            dimension_count=query_planner_dimension_count,
+        )
+        planner_field_count = sum(
+            len(columns) for columns in planner_required_columns_by_table.values()
+        ) + sum(len(columns) for columns in planner_optional_columns_by_table.values())
+        observe_column_planner(
+            strategy=column_planner_strategy,
+            outcome=(
+                "success"
+                if planner_field_count > 0
+                else ("disabled" if column_planner_strategy == "disabled" else "fallback")
+            ),
+            field_count=planner_field_count,
         )
         return SchemaSelectionResult(
-            strategy="perfetto-focused",
+            strategy=strategy,
             metadata_source="perfetto",
             selected_schema=selected_schema,
             selected_tables=[table.name for table in selected_schema.tables],
-            selected_relationships=[],
+            selected_relationships=relationship_summaries,
             prompt_text=prompt_text,
             prompt_budget_chars=len(prompt_text),
-            fetch_mode="builtin-perfetto",
+            fetch_mode=fetch_mode,
             discovery_tables=selected_tables,
-            query_planner_strategy="rule",
-            query_planner_reason="Perfetto MVP uses curated trace tables and metric patterns.",
-            query_planner_query_type="performance_trace",
-            query_planner_primary_metric=self._infer_primary_metric(user_query),
-            query_planner_time_requirement="optional",
-            query_planner_analysis_dimensions=["process", "thread", "slice"],
-            query_planner_filter_dimensions=[],
-            query_planner_candidate_tables_hard=selected_tables[: max_tables or len(selected_tables)],
-            query_planner_candidate_tables_soft=[],
-            query_planner_join_needed=True,
-            column_selection_strategy="curated-perfetto",
-            selected_columns_by_table={
-                table.name: [column.name for column in table.columns]
-                for table in selected_schema.tables
-            },
-            column_planner_strategy="rule",
-            column_planner_reason="Curated Perfetto columns are small enough for the first pass.",
-            knowledge_strategy="perfetto-builtin",
-            retrieval_notes=list(selected_schema.notes),
+            query_planner_strategy=query_planner_strategy,
+            query_planner_reason=query_planner_reason,
+            query_planner_query_type=query_plan["query_type"],
+            query_planner_primary_metric=query_plan["primary_metric"],
+            query_planner_time_requirement=query_plan["time_requirement"],
+            query_planner_analysis_dimensions=query_plan["analysis_dimensions"],
+            query_planner_filter_dimensions=query_plan["filter_dimensions"],
+            query_planner_candidate_tables_hard=query_plan["candidate_tables_hard"],
+            query_planner_candidate_tables_soft=query_plan["candidate_tables_soft"],
+            query_planner_join_needed=query_plan["join_needed"],
+            column_selection_strategy=column_selection_strategy,
+            selected_columns_by_table=selected_columns_by_table,
+            column_planner_strategy=column_planner_strategy,
+            column_planner_reason=column_planner_reason,
+            planner_required_columns_by_table=planner_required_columns_by_table,
+            planner_optional_columns_by_table=planner_optional_columns_by_table,
+            knowledge_strategy=knowledge_result.strategy,
+            knowledge_hit_ids=knowledge_result.hit_ids,
+            knowledge_hit_titles=knowledge_result.hit_titles,
+            knowledge_column_hints=knowledge_column_hints,
+            knowledge_prompt_text="\n\n".join(
+                part for part in [knowledge_prompt, column_knowledge_prompt] if part
+            ),
+            retrieval_notes=retrieval_notes,
         )
 
     def render_schema_prompt(
@@ -142,6 +352,13 @@ class PerfettoTool:
             if notes:
                 line += " {" + "; ".join(notes) + "}"
             sections.append(line)
+        if include_relationships and metadata.relationships:
+            sections.append("relationships:")
+            for relation in metadata.relationships:
+                sections.append(
+                    f"- {relation.from_table}({', '.join(relation.from_columns)}) -> "
+                    f"{relation.to_table}({', '.join(relation.to_columns)})"
+                )
         if metadata.notes:
             sections.append("notes: " + " | ".join(metadata.notes))
         return "\n".join(sections)
@@ -486,6 +703,356 @@ class PerfettoTool:
         deduped = list(dict.fromkeys(selected))
         return deduped[: max_tables or len(deduped)]
 
+    def _rank_tables_for_query(
+        self,
+        user_query: str,
+        metadata: DatabaseSchemaMetadata,
+        knowledge_result: KnowledgeRetrievalResult,
+    ) -> List[str]:
+        rule_tables = self._select_tables_for_query(user_query, max_tables=None)
+        scores: Dict[str, float] = {table.name: 0.0 for table in metadata.tables}
+        for index, table_name in enumerate(rule_tables):
+            scores[table_name] = scores.get(table_name, 0.0) + max(20.0 - index, 1.0)
+        for table_name, score in knowledge_result.table_scores.items():
+            if table_name in scores:
+                scores[table_name] += score * 10.0
+        for table in metadata.tables:
+            haystack = " ".join(
+                [
+                    table.name,
+                    table.semantic_hint or "",
+                    table.row_grain or "",
+                    " ".join(column.name for column in table.columns),
+                ]
+            ).lower()
+            for token in self._query_tokens(user_query):
+                if token and token in haystack:
+                    scores[table.name] += 1.0
+        return [
+            table.name
+            for table in sorted(
+                metadata.tables,
+                key=lambda item: (-scores.get(item.name, 0.0), item.name),
+            )
+            if scores.get(table.name, 0.0) > 0.0
+        ]
+
+    def _plan_query_with_llm(
+        self,
+        user_query: str,
+        inventory: DatabaseSchemaMetadata,
+        ranked_tables: List[str],
+        knowledge_hits: List[Any],
+    ) -> tuple[str, str, Dict[str, Any], List[str]]:
+        # Same first-stage planner shape as DatabaseTool: LLM plans intent and
+        # hard/soft tables, then the system sanitizes the result.
+        rule_plan, rule_notes = sanitize_query_plan_output(
+            metadata=inventory,
+            raw_plan=self._build_rule_query_plan(user_query, ranked_tables),
+        )
+        if not inventory.tables:
+            return "fallback", "no_inventory_tables", rule_plan, [
+                "Query planner fallback: no Perfetto inventory tables available."
+            ]
+        if not self.query_planner_client.is_enabled():
+            return "disabled", "llm_disabled", rule_plan, [
+                "Query planner skipped: LLM is disabled; used Perfetto rule plan."
+            ]
+
+        prompt_context = build_query_planner_prompt_context(
+            metadata=inventory,
+            knowledge_hits=knowledge_hits,
+        )
+        system_prompt = (
+            "你是 Perfetto query planner。"
+            "任务是根据用户性能问题和轻量 Perfetto 表清单，先规划分析意图与候选表。"
+            "这里只能输出语义规划，不能输出 SQL。"
+            "只能从给定候选表中选择 hard/soft 表。"
+            "Perfetto 常见表包括 slice、thread_track、thread、process、sched、counter、counter_track、"
+            "actual_frame_timeline_slice、expected_frame_timeline_slice。"
+            "只输出 JSON，格式固定为："
+            "{\"query_type\":\"trend|aggregate|topn|detail|distribution|lookup\","
+            "\"primary_metric\":\"...\","
+            "\"time_requirement\":\"required|optional|none\","
+            "\"analysis_dimensions\":[\"...\"],"
+            "\"filter_dimensions\":[\"...\"],"
+            "\"candidate_tables_hard\":[\"table\"],"
+            "\"candidate_tables_soft\":[\"table\"],"
+            "\"join_needed\":true,"
+            "\"reason\":\"中文说明\"}"
+        )
+        user_prompt = (
+            f"用户问题：{user_query}\n"
+            f"{prompt_context}\n"
+            "请先规划分析类型、主指标、分析维度、过滤维度和候选表。"
+        )
+
+        try:
+            raw_result = self.query_planner_client.chat_json(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                temperature=0.0,
+                max_tokens=500,
+            )
+        except Exception as ex:
+            return "fallback", f"planner_error:{type(ex).__name__}", rule_plan, [
+                f"Query planner fallback: {type(ex).__name__}; used Perfetto rule plan."
+            ]
+
+        sanitized_plan, notes = sanitize_query_plan_output(
+            metadata=inventory,
+            raw_plan=raw_result,
+        )
+        candidate_table_count = len(sanitized_plan["candidate_tables_hard"]) + len(
+            sanitized_plan["candidate_tables_soft"]
+        )
+        if candidate_table_count <= 0:
+            notes.extend(rule_notes)
+            notes.append("Query planner fallback: planner output produced no usable candidate tables.")
+            return "fallback", "planner_empty", rule_plan, notes
+
+        return "llm", sanitized_plan["reason"], sanitized_plan, notes
+
+    def _plan_columns_with_llm(
+        self,
+        user_query: str,
+        metadata: DatabaseSchemaMetadata,
+        selected_tables: List[str],
+        column_hits: List[Any],
+        planning_hits: List[Any],
+        query_plan_summary: str = "",
+    ) -> tuple[str, str, Dict[str, List[str]], Dict[str, List[str]], List[str]]:
+        # Same second-stage planner shape as DatabaseTool: LLM picks required
+        # and optional columns inside the system-provided schema boundary.
+        if not selected_tables:
+            return "disabled", "no_selected_tables", {}, {}, [
+                "Column planner skipped: no selected Perfetto tables."
+            ]
+        if not self.column_planner_client.is_enabled():
+            return "disabled", "llm_disabled", {}, {}, [
+                "Column planner skipped: LLM is disabled."
+            ]
+
+        prompt_context = build_planner_prompt_context(
+            metadata=metadata,
+            selected_tables=selected_tables,
+            column_hits=column_hits,
+            planning_hits=planning_hits,
+            query_plan_summary=query_plan_summary,
+        )
+        system_prompt = (
+            "你是 Perfetto 字段规划器。"
+            "只能从给定 schema 中选择字段，不能臆造表和字段。"
+            "目标是为本次 Perfetto SQL 生成找出最小必要字段集，以及少量关键辅助字段。"
+            "注意 ts/dur/cpu_time 等时间字段通常是纳秒，展示毫秒需要由 SQL 除以 1e6。"
+            "只输出 JSON，格式固定为："
+            "{\"required_columns_by_table\":{\"table\":[\"col\"]},"
+            "\"optional_columns_by_table\":{\"table\":[\"col\"]},"
+            "\"reason\":\"中文简述\"}"
+        )
+        user_prompt = (
+            f"用户问题：{user_query}\n"
+            f"候选表：{selected_tables}\n"
+            f"{prompt_context}\n"
+            "请只从以上候选表和字段中选择。"
+        )
+
+        try:
+            result = self.column_planner_client.chat_json(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                temperature=0.0,
+                max_tokens=600,
+            )
+        except Exception as ex:
+            return "fallback", f"planner_error:{type(ex).__name__}", {}, {}, [
+                f"Column planner fallback: {type(ex).__name__}."
+            ]
+
+        planner_reason = str(result.get("reason", "")).strip() or "planner_success"
+        required_columns, optional_columns, planner_notes = sanitize_planner_output(
+            metadata=metadata,
+            selected_tables=selected_tables,
+            raw_required=result.get("required_columns_by_table"),
+            raw_optional=result.get("optional_columns_by_table"),
+        )
+        planner_field_count = sum(len(item) for item in required_columns.values()) + sum(
+            len(item) for item in optional_columns.values()
+        )
+        if planner_field_count <= 0:
+            notes = list(planner_notes)
+            notes.append("Column planner fallback: planner output produced no usable columns.")
+            return "fallback", "planner_empty", {}, {}, notes
+
+        return "llm", planner_reason, required_columns, optional_columns, planner_notes
+
+    def _build_rule_query_plan(self, user_query: str, ranked_tables: List[str]) -> Dict[str, Any]:
+        normalized = (user_query or "").lower()
+        hard = ["slice", "thread_track", "thread", "process"]
+        soft: List[str] = []
+        primary_metric = "duration_ms"
+        analysis_dimensions = ["process", "thread", "slice"]
+        filter_dimensions = ["duration_threshold"]
+        query_type = "topn"
+        join_needed = True
+        reason = "perfetto_long_slice_rule"
+
+        if any(token in normalized for token in ["cpu", "sched", "调度", "占用"]):
+            hard = ["sched", "thread", "process"]
+            soft = ["slice", "thread_track"]
+            primary_metric = "cpu_time_ms"
+            analysis_dimensions = ["process", "thread", "cpu"]
+            filter_dimensions = []
+            reason = "perfetto_cpu_rule"
+        elif any(token in normalized for token in ["counter", "memory", "内存", "rss", "oom"]):
+            hard = ["counter", "counter_track"]
+            soft = ["process", "thread"]
+            primary_metric = "counter_value"
+            analysis_dimensions = ["counter", "process"]
+            filter_dimensions = ["counter_name", "time"]
+            query_type = "trend"
+            reason = "perfetto_counter_rule"
+        elif any(token in normalized for token in ["frame", "jank", "帧", "卡顿"]):
+            hard = ["slice", "thread_track", "thread", "process"]
+            soft = ["actual_frame_timeline_slice", "expected_frame_timeline_slice"]
+            primary_metric = "frame_or_slice_duration_ms"
+            analysis_dimensions = ["frame", "thread", "process"]
+            filter_dimensions = ["duration_threshold"]
+            reason = "perfetto_frame_or_slice_rule"
+
+        ranked_set = set(ranked_tables)
+        if ranked_set:
+            soft.extend(table_name for table_name in ranked_tables if table_name not in set(hard))
+
+        return {
+            "query_type": query_type,
+            "primary_metric": primary_metric,
+            "time_requirement": "optional",
+            "analysis_dimensions": analysis_dimensions,
+            "filter_dimensions": filter_dimensions,
+            "candidate_tables_hard": hard,
+            "candidate_tables_soft": soft,
+            "join_needed": join_needed,
+            "reason": reason,
+        }
+
+    def _build_column_priorities(
+        self,
+        metadata: DatabaseSchemaMetadata,
+        selected_tables: List[str],
+        column_hits: List[Any],
+        query_plan: Dict[str, Any],
+    ) -> Dict[str, List[str]]:
+        selected = set(selected_tables)
+        priorities: Dict[str, List[str]] = {}
+        metric = str(query_plan.get("primary_metric", "") or "").lower()
+
+        def add(table_name: str, column_names: Iterable[str]) -> None:
+            if table_name not in selected:
+                return
+            priorities.setdefault(table_name, [])
+            seen = set(priorities[table_name])
+            for column_name in column_names:
+                if column_name and column_name not in seen:
+                    priorities[table_name].append(column_name)
+                    seen.add(column_name)
+
+        for relation in metadata.relationships:
+            if relation.from_table in selected and relation.to_table in selected:
+                add(relation.from_table, relation.from_columns)
+                add(relation.to_table, relation.to_columns)
+
+        for table in metadata.tables:
+            if table.name not in selected:
+                continue
+            time_columns = [
+                column.name
+                for column in table.columns
+                if any(marker in column.name.lower() for marker in ["ts", "time", "dur"])
+            ]
+            add(table.name, table.primary_key)
+            add(table.name, time_columns)
+            add(table.name, ["name"])
+
+        if "cpu" in metric:
+            add("sched", ["dur", "cpu", "utid", "end_state"])
+            add("thread", ["utid", "upid", "name"])
+            add("process", ["upid", "name"])
+        elif "counter" in metric:
+            add("counter", ["ts", "track_id", "value"])
+            add("counter_track", ["id", "name", "upid", "utid"])
+        elif "frame" in metric:
+            add("actual_frame_timeline_slice", ["ts", "dur", "name", "jank_type"])
+            add("expected_frame_timeline_slice", ["ts", "dur", "name"])
+        else:
+            add("slice", ["ts", "dur", "track_id", "name", "category"])
+            add("thread_track", ["id", "utid", "name"])
+            add("thread", ["utid", "upid", "name"])
+            add("process", ["upid", "name"])
+
+        for hit in column_hits:
+            table_name = getattr(hit, "table_name", "")
+            column_name = getattr(hit, "column_name", "")
+            add(str(table_name), [str(column_name)])
+
+        return priorities
+
+    def _slice_schema_metadata(
+        self,
+        metadata: DatabaseSchemaMetadata,
+        selected_tables: List[str],
+        max_columns_per_table: int,
+        prioritized_columns_by_table: Dict[str, List[str]],
+    ) -> DatabaseSchemaMetadata:
+        selected = set(selected_tables)
+        sliced_tables: List[TableSchema] = []
+        for table in metadata.tables:
+            if table.name not in selected:
+                continue
+            priority = prioritized_columns_by_table.get(table.name, [])
+            columns_by_name = {column.name: column for column in table.columns}
+            ordered_columns: List[SchemaColumn] = []
+            seen = set()
+            for column_name in priority:
+                column = columns_by_name.get(column_name)
+                if column is None or column.name in seen:
+                    continue
+                ordered_columns.append(column)
+                seen.add(column.name)
+            for column in table.columns:
+                if len(ordered_columns) >= max_columns_per_table:
+                    break
+                if column.name in seen:
+                    continue
+                ordered_columns.append(column)
+                seen.add(column.name)
+            sliced_tables.append(
+                table.model_copy(update={"columns": ordered_columns})
+                if hasattr(table, "model_copy")
+                else table.copy(update={"columns": ordered_columns})
+            )
+
+        relationships = [
+            relation
+            for relation in metadata.relationships
+            if relation.from_table in selected and relation.to_table in selected
+        ]
+        return DatabaseSchemaMetadata(
+            source="perfetto",
+            schema_name=metadata.schema_name,
+            tables=sliced_tables,
+            relationships=relationships,
+            notes=list(metadata.notes),
+        )
+
+    @staticmethod
+    def _query_tokens(user_query: str) -> List[str]:
+        return [
+            token
+            for token in re.split(r"[^A-Za-z0-9_\u4e00-\u9fff]+", (user_query or "").lower())
+            if token
+        ]
+
     def _infer_primary_metric(self, user_query: str) -> str:
         normalized = (user_query or "").lower()
         if any(token in normalized for token in ["cpu", "sched", "调度", "占用"]):
@@ -615,3 +1182,55 @@ class PerfettoTool:
                 for column_name, data_type, semantic_hint in columns
             ],
         )
+
+    def _builtin_perfetto_relationships(self) -> List[SchemaRelationship]:
+        return [
+            SchemaRelationship(
+                name="slice__thread_track",
+                from_table="slice",
+                from_columns=["track_id"],
+                to_table="thread_track",
+                to_columns=["id"],
+                description="Map slices to thread tracks.",
+            ),
+            SchemaRelationship(
+                name="thread_track__thread",
+                from_table="thread_track",
+                from_columns=["utid"],
+                to_table="thread",
+                to_columns=["utid"],
+                description="Map thread tracks to thread metadata.",
+            ),
+            SchemaRelationship(
+                name="thread__process",
+                from_table="thread",
+                from_columns=["upid"],
+                to_table="process",
+                to_columns=["upid"],
+                description="Map threads to owning process metadata.",
+            ),
+            SchemaRelationship(
+                name="sched__thread",
+                from_table="sched",
+                from_columns=["utid"],
+                to_table="thread",
+                to_columns=["utid"],
+                description="Map scheduler rows to thread metadata.",
+            ),
+            SchemaRelationship(
+                name="counter__counter_track",
+                from_table="counter",
+                from_columns=["track_id"],
+                to_table="counter_track",
+                to_columns=["id"],
+                description="Map counter samples to counter metadata.",
+            ),
+            SchemaRelationship(
+                name="counter_track__process",
+                from_table="counter_track",
+                from_columns=["upid"],
+                to_table="process",
+                to_columns=["upid"],
+                description="Map process-scoped counters to process metadata.",
+            ),
+        ]

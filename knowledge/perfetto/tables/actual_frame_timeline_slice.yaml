@@ -1,0 +1,22 @@
+id: perfetto.table.actual_frame_timeline_slice
+kind: table_profile
+title: Perfetto actual frame timeline slice table
+table: actual_frame_timeline_slice
+summary: Android actual frame timeline data, useful when the trace contains frame/jank annotations.
+row_grain: one actual frame
+important_columns:
+  - id
+  - ts
+  - dur
+  - name
+  - jank_type
+aliases:
+  - frame
+  - jank
+  - actual frame
+tags:
+  - perfetto
+  - trace
+  - frame
+  - jank
+enabled: true

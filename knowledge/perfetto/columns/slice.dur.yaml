@@ -1,0 +1,15 @@
+id: perfetto.column.slice.dur
+kind: column_semantics
+title: Perfetto slice duration
+table: slice
+column: dur
+summary: Duration in nanoseconds. Divide by 1e6 to expose milliseconds as dur_ms or duration_ms.
+retrieval_keywords:
+  - duration
+  - dur_ms
+  - long slice
+  - stall
+tags:
+  - perfetto
+  - duration
+enabled: true

@@ -1,8 +1,3 @@
-SELECT daily.service, daily.day, daily.error_count, avg30.avg_error_30d, ROUND(daily.error_count::numeric / NULLIF(avg30.avg_error_30d, 0), 2) AS exceed_ratio FROM (SELECT service, DATE(ts) AS day, COUNT(*) AS error_count FROM ops_log_event WHERE level = 'ERROR' AND ts >= CURRENT_DATE - INTERVAL '20 days' GROUP BY service, DATE(ts)) daily JOIN (SELECT service, COUNT(*)::numeric / 30 AS avg_error_30d FROM ops_log_event WHERE level = 'ERROR' AND ts >= CURRENT_DATE - INTERVAL '30 days' AND ts < CURRENT_DATE GROUP BY service) avg30 ON daily.service = avg30.service WHERE daily.error_count > 1.5 * avg30.avg_error_30d ORDER BY exceed_ratio DESC;"
+分析这份 trace 里 CPU 占用最高的线程，并判断这些线程是否同时存在长耗时 slice。请按进程名、线程名聚合，统计每个线程的 cpu_time_ms、长 slice 次数、最长 slice 耗时、平均 slice 耗时，只保留 cpu_time_ms 大于 20ms 或最长 slice 超过 16ms 的线程，按 cpu_time_ms 降序返回前 20 个，并给出可能的卡顿原因。
 
-
-客户端性能问题分析
-性能问题原因
-btrace 生成数据
-
-
+perfetto-complex-1

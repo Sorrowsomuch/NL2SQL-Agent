@@ -1,0 +1,27 @@
+id: perfetto.table.sched
+kind: table_profile
+title: Perfetto sched table
+table: sched
+summary: CPU scheduler slices used to calculate scheduled CPU time by thread, process, and CPU core.
+row_grain: one scheduled thread interval
+important_columns:
+  - ts
+  - dur
+  - cpu
+  - utid
+  - end_state
+aliases:
+  - cpu
+  - scheduler
+  - sched
+  - CPU time
+use_cases:
+  - Rank threads by scheduled CPU time.
+  - Inspect CPU hot spots and scheduling states.
+join_hints:
+  - sched.utid = thread.utid
+tags:
+  - perfetto
+  - trace
+  - cpu
+enabled: true

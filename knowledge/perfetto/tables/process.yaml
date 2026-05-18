@@ -1,0 +1,18 @@
+id: perfetto.table.process
+kind: table_profile
+title: Perfetto process table
+table: process
+summary: Process metadata, including pid, upid, and process name.
+row_grain: one process
+important_columns:
+  - upid
+  - pid
+  - name
+join_hints:
+  - process.upid = thread.upid
+  - process.upid = counter_track.upid
+tags:
+  - perfetto
+  - trace
+  - process
+enabled: true
