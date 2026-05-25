@@ -15,11 +15,11 @@ def _env_bool(name: str, default: bool = False) -> bool:
 class DatabaseConfig:
     """数据库配置（文件配置优先，可按需再用环境变量覆盖）。"""
 
-    host: str = "127.0.0.1"
+    host: str = "localhost"
     port: int = 5432
-    name: str = "jchatmind"
-    user: str = "admin"
-    password: str = "123456"
+    name: str = "your_db_name"
+    user: str = "your_db_user"
+    password: str = "your_db_password"
 
 
 DB_CONFIG = DatabaseConfig()
