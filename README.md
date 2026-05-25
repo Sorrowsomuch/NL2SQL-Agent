@@ -193,14 +193,4 @@ PerfettoAgent.run
 
 This keeps the Perfetto path close to the original DB path: only the SQL execution tool changes, while the executor, reviewer, memory and retry workflow stay reusable.
 
-## Repository Hygiene
 
-This public repository intentionally excludes:
-
-- Python caches and local tool caches
-- Runtime logs and temporary debug output
-- Internal planning documents under `docs/`
-- Local SQL bootstrap scripts under `sql/`
-- Trace captures such as `*.pb`, `*.trace` and `*.perfetto-trace`
-
-Keep public-facing setup and usage information in this README. Keep private runbooks, experimental notes and data captures outside the published repository.
