@@ -1,0 +1,38 @@
+# Python runtime artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Local environments
+.env
+.venv/
+venv/
+env/
+
+# Runtime logs and local debug output
+*.log
+/error.txt
+/review.md
+/debug.txt
+/request.txt
+/test.txt
+
+# Top-level internal notes; keep the public README tracked.
+/*.md
+!/README.md
+
+# Internal planning docs and local SQL bootstrap files are not published.
+/docs/
+/sql/
+
+# Local trace captures can be large and may contain sensitive data.
+*.pb
+*.perfetto-trace
+*.trace
+
+# Test and tool caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
